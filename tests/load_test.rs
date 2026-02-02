@@ -24,7 +24,7 @@ fn test_load_performance() {
     engine.execute("CREATE TABLE users (id INT, age INT, name VARCHAR)").unwrap();
 
     // 2. Bulk Insert (1000 rows)
-    let total_rows = 1_000;
+    let total_rows = 10_000;
     println!("Inserting {} rows...", total_rows);
     let start_insert = Instant::now();
     

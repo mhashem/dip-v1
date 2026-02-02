@@ -153,6 +153,10 @@ impl TableIterator {
         self.current_page_id
     }
 
+    pub fn is_end(&self) -> bool {
+        self.finished
+    }
+
     pub fn skip_page(&mut self) {
         if self.finished { return; }
         
