@@ -32,6 +32,33 @@ impl Schema {
     pub fn column_count(&self) -> usize {
         self.columns.len()
     }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        // Num columns (u32)
+        bytes.extend_from_slice(&(self.columns.len() as u32).to_le_bytes());
+        for col in &self.columns {
+            bytes.extend(col.to_bytes());
+        }
+        bytes
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Option<(Self, usize)> {
+        if data.len() < 4 { return None; }
+        
+        let num_cols = u32::from_le_bytes(data[0..4].try_into().ok()?) as usize;
+        let mut offset = 4;
+        let mut columns = Vec::with_capacity(num_cols);
+        
+        for _ in 0..num_cols {
+            if offset >= data.len() { return None; }
+            let (col, len) = Column::from_bytes(&data[offset..])?;
+            columns.push(col);
+            offset += len;
+        }
+        
+        Some((Self::new(columns), offset))
+    }
 }
 
 #[cfg(test)]

@@ -57,6 +57,13 @@ impl<'a> Executor for InsertExecutor<'a> {
              for (i, val) in values.iter().enumerate() {
                  page_stats.update(i, val);
              }
+
+             // Update Index
+             if let Some(index) = &self.context.catalog.index {
+                 if let Value::Integer(k) = tuple.get_value(&self.context.catalog.schema, 0) {
+                     index.lock().unwrap().insert(k, rid);
+                 }
+             }
         }
         
         self.cursor += 1;

@@ -5,12 +5,12 @@ use crate::types::{Value, TypeId};
 use crate::execution::executor::{Executor, ExecutorContext};
 use crate::execution::insert::InsertExecutor;
 use crate::execution::seq_scan::SeqScanExecutor;
+use crate::execution::index_scan::IndexScanExecutor;
 use crate::execution::expression::{Expression, BinaryOperator};
 use crate::execution::filter::FilterExecutor;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 use sqlparser::ast::{Statement, ObjectName, DataType, SetExpr, Expr, Values};
-use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -26,7 +26,7 @@ pub enum SQLError {
 }
 
 pub struct SQLEngine {
-    catalog: CatalogManager,
+    pub catalog: CatalogManager,
 }
 
 impl SQLEngine {
@@ -153,7 +153,6 @@ impl SQLEngine {
             .ok_or_else(|| SQLError::CatalogError(format!("Table {} not found", table_name)))?;
         
         let context = ExecutorContext { catalog: table_meta.clone() };
-        let mut scan_executor = SeqScanExecutor::new(&context);
         
         // Build Executor Chain
         let mut root_exec: Box<dyn Executor>;
@@ -161,15 +160,39 @@ impl SQLEngine {
         if let Some(expr) = selection {
             let predicate = self.parse_expression(expr, &table_meta.schema)?;
             
-            // Optimization: Push down predicate to Scan for Zone Maps
-            scan_executor.set_predicate(predicate.clone());
-            
-            // We still keep the FilterExecutor on top because Zone Maps are imprecise (Min/Max).
-            // They only say "Maybe". We still need to filter individual rows.
-            let scan_exec_box: Box<dyn Executor> = Box::new(scan_executor);
-            root_exec = Box::new(FilterExecutor::new(&context, scan_exec_box, predicate));
+            // Optimization: Check for Index Scan
+            // Logic: if predicate is "col = val" AND col is primary key (idx 0) AND table has index
+            let mut use_index = false;
+            let mut key_val = 0;
+
+            if table_meta.index.is_some() {
+                 if let Expression::Binary { left, op, right } = &predicate {
+                     if *op == BinaryOperator::Eq {
+                         if let (Expression::Column(idx), Expression::Constant(val)) = (left.as_ref(), right.as_ref()) {
+                             if *idx == 0 { // Primary Key / First Column
+                                 if let Value::Integer(k) = val {
+                                     use_index = true;
+                                     key_val = *k;
+                                 }
+                             }
+                         }
+                     }
+                 }
+            }
+
+            if use_index {
+                // println!("Using Index Scan for key: {}", key_val);
+                root_exec = Box::new(IndexScanExecutor::new(&context, key_val));
+            } else {
+                // Fallback to SeqScan with Zone Maps
+                let mut scan_executor = SeqScanExecutor::new(&context);
+                scan_executor.set_predicate(predicate.clone());
+                
+                let scan_exec_box: Box<dyn Executor> = Box::new(scan_executor);
+                root_exec = Box::new(FilterExecutor::new(&context, scan_exec_box, predicate));
+            }
         } else {
-             root_exec = Box::new(scan_executor);
+             root_exec = Box::new(SeqScanExecutor::new(&context));
         }
         
         root_exec.init();

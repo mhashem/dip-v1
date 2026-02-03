@@ -11,11 +11,20 @@ fn main() {
     
     // Initialize DB
     let path = std::env::current_dir().unwrap().join("dip.db");
+    let meta_path = std::env::current_dir().unwrap().join("dip.meta");
     println!("Database file: {:?}", path);
     
     let dm = DiskManager::new(&path).unwrap();
     let bpm = Arc::new(Mutex::new(BufferPoolManager::new(100, dm)));
-    let catalog = CatalogManager::new(bpm);
+    let mut catalog = CatalogManager::new(bpm);
+    
+    // Load Metadata
+    if let Err(e) = catalog.load_metadata(&meta_path) {
+        println!("Warning: Failed to load metadata (may be new DB): {}", e);
+    } else {
+        println!("Loaded metadata from {:?}", meta_path);
+    }
+
     let mut engine = SQLEngine::new(catalog);
 
     loop {
@@ -29,6 +38,12 @@ fn main() {
 
         let input = input.trim();
         if input.eq_ignore_ascii_case("exit") {
+             // Save Metadata on Exit
+             if let Err(e) = engine.catalog.save_metadata(&meta_path) {
+                 println!("Error saving metadata: {}", e);
+             } else {
+                 println!("Saved metadata to {:?}", meta_path);
+             }
             break;
         }
         

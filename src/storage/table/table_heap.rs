@@ -127,6 +127,10 @@ impl TableHeap {
         tuple
     }
 
+    pub fn get_first_page_id(&self) -> PageId {
+        self.first_page_id
+    }
+
     pub fn iter(&self) -> TableIterator {
         TableIterator::new(self.bpm.clone(), self.first_page_id)
     }
