@@ -1,5 +1,5 @@
-use dip_v1::storage::disk_manager::DiskManager;
 use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
+use dip_v1::storage::disk_manager::DiskManager;
 use dip_v1::storage::table::table_heap::TableHeap;
 use dip_v1::storage::tuple::Tuple;
 use std::sync::Arc;

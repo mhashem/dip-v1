@@ -1,5 +1,5 @@
-use crate::types::Value;
 use crate::catalog::schema::Schema;
+use crate::types::Value;
 
 /// A batch of tuples, organized by column (Columnar Layout).
 /// This structure is CPU-cache friendly and allows for SIMD processing.

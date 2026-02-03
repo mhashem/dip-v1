@@ -1,8 +1,8 @@
-use crate::concurrency::transaction::{Transaction, TxnId, TransactionState};
 use crate::concurrency::lock_manager::LockManager;
+use crate::concurrency::transaction::{Transaction, TransactionState, TxnId};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 
 /// Manages the global state of transactions.
 pub struct TransactionManager {

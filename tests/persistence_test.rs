@@ -1,14 +1,14 @@
-use dip_v1::storage::disk_manager::DiskManager;
-use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
 use dip_v1::catalog::catalog_manager::CatalogManager;
-use dip_v1::catalog::schema::Schema;
 use dip_v1::catalog::column::Column;
-use dip_v1::types::{Value, TypeId};
+use dip_v1::catalog::schema::Schema;
+use dip_v1::concurrency::transaction_manager::TransactionManager;
 use dip_v1::execution::executor::{Executor, ExecutorContext};
 use dip_v1::execution::insert::InsertExecutor;
-use dip_v1::concurrency::transaction_manager::TransactionManager;
-use std::sync::Arc;
+use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
+use dip_v1::storage::disk_manager::DiskManager;
+use dip_v1::types::{TypeId, Value};
 use std::fs;
+use std::sync::Arc;
 
 #[test]
 fn test_metadata_persistence() {

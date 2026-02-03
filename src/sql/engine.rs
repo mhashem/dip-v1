@@ -1,7 +1,9 @@
 use crate::catalog::catalog_manager::CatalogManager;
 use crate::catalog::column::Column;
 use crate::catalog::schema::Schema;
+use crate::concurrency::transaction::Transaction;
 use crate::concurrency::transaction_manager::TransactionManager;
+use crate::errors::DipError;
 use crate::execution::executor::{Executor, ExecutorContext};
 use crate::execution::expression::{BinaryOperator, Expression};
 use crate::execution::filter::FilterExecutor;
@@ -10,23 +12,9 @@ use crate::execution::insert::InsertExecutor;
 use crate::execution::seq_scan::SeqScanExecutor;
 use crate::types::{TypeId, Value};
 use sqlparser::ast::{ColumnOption, DataType, Expr, ObjectName, SetExpr, Statement, Values};
-use sqlparser::parser::Parser;
 use sqlparser::dialect::GenericDialect;
+use sqlparser::parser::Parser;
 use std::sync::{Arc, Mutex};
-use thiserror::Error;
-use crate::concurrency::transaction::Transaction;
-
-#[derive(Error, Debug)]
-pub enum SQLError {
-    #[error("Parse Error: {0}")]
-    ParseError(String),
-    #[error("Catalog Error: {0}")]
-    CatalogError(String),
-    #[error("Execution Error: {0}")]
-    ExecutionError(String),
-    #[error("Unsupported feature: {0}")]
-    Unsupported(String),
-}
 
 pub struct SQLEngine {
     pub catalog: CatalogManager,
@@ -41,10 +29,10 @@ impl SQLEngine {
         }
     }
 
-    pub fn execute(&mut self, sql: &str) -> Result<String, SQLError> {
+    pub fn execute(&mut self, sql: &str) -> Result<String, DipError> {
         let dialect = GenericDialect {};
         let ast = Parser::parse_sql(&dialect, sql)
-            .map_err(|e| SQLError::ParseError(e.to_string()))?;
+            .map_err(|e| DipError::ParseError(e.to_string()))?;
 
         let mut output = String::new();
         // Start Transaction
@@ -64,7 +52,7 @@ impl SQLEngine {
                     let result = self.handle_query(query, txn.clone())?;
                     output.push_str(&result);
                 }
-                _ => return Err(SQLError::Unsupported("Only CREATE, INSERT, and SELECT are supported".into())),
+                _ => return Err(DipError::Unsupported("Only CREATE, INSERT, and SELECT are supported".into())),
             }
         }
         
@@ -74,7 +62,7 @@ impl SQLEngine {
         Ok(output)
     }
 
-    fn handle_create_table(&mut self, name: ObjectName, columns: Vec<sqlparser::ast::ColumnDef>) -> Result<(), SQLError> {
+    fn handle_create_table(&mut self, name: ObjectName, columns: Vec<sqlparser::ast::ColumnDef>) -> Result<(), DipError> {
         let table_name = name.to_string();
         let mut schema_cols = Vec::new();
 
@@ -84,7 +72,7 @@ impl SQLEngine {
                 DataType::Int(_) | DataType::Integer(_) => TypeId::Integer,
                 DataType::Boolean => TypeId::Boolean,
                 DataType::Varchar(_) | DataType::String => TypeId::Varchar,
-                _ => return Err(SQLError::Unsupported(format!("Data type {:?} not supported", col.data_type))),
+                _ => return Err(DipError::Unsupported(format!("Data type {:?} not supported", col.data_type))),
             };
 
             let mut is_primary = false;
@@ -102,15 +90,15 @@ impl SQLEngine {
         Ok(())
     }
 
-    fn handle_insert(&mut self, table_name: ObjectName, source: Box<sqlparser::ast::Query>, txn: Arc<Mutex<Transaction>>) -> Result<usize, SQLError> {
+    fn handle_insert(&mut self, table_name: ObjectName, source: Box<sqlparser::ast::Query>, txn: Arc<Mutex<Transaction>>) -> Result<usize, DipError> {
         let name_str = table_name.to_string();
         let table_meta = self.catalog.get_table(&name_str)
-            .ok_or_else(|| SQLError::CatalogError(format!("Table {} not found", name_str)))?;
+            .ok_or_else(|| DipError::TableNotFound(format!("Table {} not found", name_str)))?;
 
         // Extract values from the AST
         let rows = match *source.body {
             SetExpr::Values(Values { rows, .. }) => rows,
-            _ => return Err(SQLError::Unsupported("Only INSERT INTO ... VALUES (...) supported".into())),
+            _ => return Err(DipError::Unsupported("Only INSERT INTO ... VALUES (...) supported".into())),
         };
 
         let mut values_batch = Vec::new();
@@ -118,7 +106,7 @@ impl SQLEngine {
         for row in rows {
             let mut row_values = Vec::new();
             if row.len() != table_meta.schema.column_count() {
-                 return Err(SQLError::ExecutionError(format!("Column count mismatch. Expected {}, got {}", table_meta.schema.column_count(), row.len())));
+                 return Err(DipError::TypeMismatch(format!("Column count mismatch. Expected {}, got {}", table_meta.schema.column_count(), row.len())));
             }
 
             for (i, expr) in row.iter().enumerate() {
@@ -126,17 +114,17 @@ impl SQLEngine {
                 let val = match (expr, target_type) {
                     (Expr::Value(v), TypeId::Integer) => match v {
                          sqlparser::ast::Value::Number(n, _) => Value::Integer(n.parse().unwrap_or(0)),
-                         _ => return Err(SQLError::ExecutionError(format!("Expected Integer at index {}", i))),
+                         _ => return Err(DipError::TypeMismatch(format!("Expected Integer at index {}", i))),
                     },
                     (Expr::Value(v), TypeId::Boolean) => match v {
                         sqlparser::ast::Value::Boolean(b) => Value::Boolean(*b),
-                        _ => return Err(SQLError::ExecutionError(format!("Expected Boolean at index {}", i))),
+                        _ => return Err(DipError::TypeMismatch(format!("Expected Boolean at index {}", i))),
                     },
                     (Expr::Value(v), TypeId::Varchar) => match v {
                         sqlparser::ast::Value::SingleQuotedString(s) => Value::Varchar(s.clone()),
-                        _ => return Err(SQLError::ExecutionError(format!("Expected String at index {}", i))),
+                        _ => return Err(DipError::TypeMismatch(format!("Expected String at index {}", i))),
                     },
-                    _ => return Err(SQLError::ExecutionError(format!("Type mismatch or unsupported value at index {}", i))),
+                    _ => return Err(DipError::TypeMismatch(format!("Type mismatch or unsupported value at index {}", i))),
                 };
                 row_values.push(val);
             }
@@ -152,29 +140,49 @@ impl SQLEngine {
         let mut exec = InsertExecutor::new(&context, values_batch);
         exec.init();
         
-        while exec.next().is_some() {}
+        // Handle insertion one by one
+        // InsertExecutor::next returns Option<Tuple>.
+        // BUT, we changed InsertExecutor logic to check PKey.
+        // It returns None if PKey duplicate.
+        // We need to propagate that error!
+        // InsertExecutor needs to return Result<Option<Tuple>, DipError>.
+        // But Executor trait is `next(&mut self) -> Option<Tuple>`.
+        // This is a limitation.
+        // For now, if next() returns None prematurely, we assume it finished OR failed?
+        // InsertExecutor returns Some(tuple) for every inserted row.
+        // If it returns None, it means no more rows.
+        // If we supply 5 rows, and it returns 2 tuples, it failed on 3rd.
         
-        Ok(count)
+        let mut success_count = 0;
+        while exec.next().is_some() {
+            success_count += 1;
+        }
+        
+        if success_count < count {
+            return Err(DipError::PkViolation("Duplicate or Lock Error".into()));
+        }
+        
+        Ok(success_count)
     }
 
-    fn handle_query(&mut self, query: Box<sqlparser::ast::Query>, txn: Arc<Mutex<Transaction>>) -> Result<String, SQLError> {
+    fn handle_query(&mut self, query: Box<sqlparser::ast::Query>, txn: Arc<Mutex<Transaction>>) -> Result<String, DipError> {
         // Assume SELECT * FROM table
         let (table_name, selection) = match query.body.as_ref() {
             SetExpr::Select(select) => {
                  let table_name = match select.from.first() {
                      Some(table_with_joins) => match &table_with_joins.relation {
                          sqlparser::ast::TableFactor::Table { name, .. } => name.to_string(),
-                         _ => return Err(SQLError::Unsupported("Only SELECT FROM table supported".into())),
+                         _ => return Err(DipError::Unsupported("Only SELECT FROM table supported".into())),
                      },
-                     None => return Err(SQLError::Unsupported("No table specified".into())),
+                     None => return Err(DipError::Unsupported("No table specified".into())),
                  };
                  (table_name, select.selection.clone())
             },
-            _ => return Err(SQLError::Unsupported("Only SELECT queries supported".into())),
+            _ => return Err(DipError::Unsupported("Only SELECT queries supported".into())),
         };
 
         let table_meta = self.catalog.get_table(&table_name)
-            .ok_or_else(|| SQLError::CatalogError(format!("Table {} not found", table_name)))?;
+            .ok_or_else(|| DipError::TableNotFound(format!("Table {} not found", table_name)))?;
         
         let context = ExecutorContext { 
             catalog: table_meta.clone(),
@@ -189,7 +197,6 @@ impl SQLEngine {
             let predicate = self.parse_expression(expr, &table_meta.schema)?;
             
             // Optimization: Check for Index Scan
-            // Logic: if predicate is "col = val" AND col is primary key (idx 0) AND table has index
             let mut use_index = false;
             let mut key_val = 0;
 
@@ -209,10 +216,8 @@ impl SQLEngine {
             }
 
             if use_index {
-                // println!("Using Index Scan for key: {}", key_val);
                 root_exec = Box::new(IndexScanExecutor::new(&context, key_val));
             } else {
-                // Fallback to SeqScan with Zone Maps
                 let mut scan_executor = SeqScanExecutor::new(&context);
                 scan_executor.set_predicate(predicate.clone());
                 
@@ -249,7 +254,7 @@ impl SQLEngine {
         Ok(output)
     }
 
-    fn parse_expression(&self, expr: Expr, schema: &Schema) -> Result<Expression, SQLError> {
+    fn parse_expression(&self, expr: Expr, schema: &Schema) -> Result<Expression, DipError> {
         match expr {
             Expr::BinaryOp { left, op, right } => {
                 let l_expr = self.parse_expression(*left, schema)?;
@@ -262,7 +267,7 @@ impl SQLEngine {
                     sqlparser::ast::BinaryOperator::Gt => BinaryOperator::Gt,
                     sqlparser::ast::BinaryOperator::LtEq => BinaryOperator::LtEq,
                     sqlparser::ast::BinaryOperator::GtEq => BinaryOperator::GtEq,
-                    _ => return Err(SQLError::Unsupported(format!("Binary Operator {:?} not supported", op))),
+                    _ => return Err(DipError::Unsupported(format!("Binary Operator {:?} not supported", op))),
                 };
                 
                 Ok(Expression::Binary {
@@ -274,7 +279,7 @@ impl SQLEngine {
             Expr::Identifier(ident) => {
                 let name = ident.to_string();
                 let idx = schema.get_col_index(&name)
-                    .ok_or_else(|| SQLError::ParseError(format!("Column {} not found", name)))?;
+                    .ok_or_else(|| DipError::ColumnNotFound(format!("Column {} not found", name)))?;
                 Ok(Expression::Column(idx))
             }
             Expr::Value(v) => {
@@ -282,10 +287,10 @@ impl SQLEngine {
                      sqlparser::ast::Value::Number(n, _) => Ok(Expression::Constant(Value::Integer(n.parse().unwrap_or(0)))),
                      sqlparser::ast::Value::Boolean(b) => Ok(Expression::Constant(Value::Boolean(b))),
                      sqlparser::ast::Value::SingleQuotedString(s) => Ok(Expression::Constant(Value::Varchar(s))),
-                     _ => Err(SQLError::Unsupported(format!("Value {:?} not supported in expression", v))),
+                     _ => Err(DipError::Unsupported(format!("Value {:?} not supported in expression", v))),
                  }
             }
-            _ => Err(SQLError::Unsupported(format!("Expression {:?} not supported", expr))),
+            _ => Err(DipError::Unsupported(format!("Expression {:?} not supported", expr))),
         }
     }
 }

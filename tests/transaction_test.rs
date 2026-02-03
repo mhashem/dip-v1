@@ -1,5 +1,5 @@
-use dip_v1::concurrency::transaction_manager::TransactionManager;
 use dip_v1::concurrency::transaction::TransactionState;
+use dip_v1::concurrency::transaction_manager::TransactionManager;
 use std::sync::Arc;
 use std::thread;
 

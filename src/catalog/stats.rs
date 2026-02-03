@@ -1,5 +1,5 @@
-use crate::types::{Value, TypeId};
-use crate::execution::expression::{Expression, BinaryOperator};
+use crate::execution::expression::{BinaryOperator, Expression};
+use crate::types::{TypeId, Value};
 use std::collections::HashMap;
 use std::convert::TryInto;
 

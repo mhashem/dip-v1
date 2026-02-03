@@ -1,7 +1,6 @@
+use crate::storage::disk_manager::PageId;
 use crate::storage::index::b_plus_tree_page::{BPlusTreePage, IndexPageType, INDEX_PAGE_HEADER_SIZE};
 use crate::storage::table::rid::RID;
-use crate::storage::disk_manager::PageId;
-use std::mem::size_of;
 
 // Key is i32 (4 bytes)
 // RID is u64 equivalent (PageId u32 + Slot u32) -> 8 bytes

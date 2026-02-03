@@ -1,8 +1,8 @@
-use dip_v1::storage::disk_manager::DiskManager;
 use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
+use dip_v1::storage::disk_manager::DiskManager;
 use dip_v1::storage::table::table_heap::TableHeap;
 use dip_v1::storage::tuple::Tuple;
-use dip_v1::types::{Value, TypeId};
+use dip_v1::types::{TypeId, Value};
 use std::sync::Arc;
 
 #[test]

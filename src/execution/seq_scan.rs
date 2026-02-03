@@ -1,9 +1,9 @@
-use crate::execution::executor::{Executor, ExecutorContext};
-use crate::storage::tuple::Tuple;
 use crate::catalog::schema::Schema;
-use crate::storage::table::table_heap::TableIterator;
-use crate::execution::expression::Expression;
 use crate::concurrency::lock_manager::LockMode;
+use crate::execution::executor::{Executor, ExecutorContext};
+use crate::execution::expression::Expression;
+use crate::storage::table::table_heap::TableIterator;
+use crate::storage::tuple::Tuple;
 
 pub struct SeqScanExecutor<'a> {
     context: &'a ExecutorContext,

@@ -1,9 +1,9 @@
 use crate::storage::buffer_pool_manager::BufferPoolManager;
 use crate::storage::disk_manager::{PageId, PAGE_SIZE};
-use crate::storage::table::rid::RID;
-use crate::storage::index::b_plus_tree_page::{BPlusTreePage, INDEX_PAGE_HEADER_SIZE};
-use crate::storage::index::b_plus_tree_leaf_page::BPlusTreeLeafPage;
 use crate::storage::index::b_plus_tree_internal_page::BPlusTreeInternalPage;
+use crate::storage::index::b_plus_tree_leaf_page::BPlusTreeLeafPage;
+use crate::storage::index::b_plus_tree_page::{BPlusTreePage, INDEX_PAGE_HEADER_SIZE};
+use crate::storage::table::rid::RID;
 use std::sync::Arc;
 
 // Constants
@@ -96,7 +96,7 @@ impl BPlusTree {
         }
     }
 
-    pub fn insert(&mut self, key: i32, value: RID) {
+    pub fn insert(&mut self, key: i32, value: RID) -> bool {
         // 1. Find Leaf
         let leaf_page_id = self.find_leaf_page(key);
         
@@ -109,6 +109,15 @@ impl BPlusTree {
         let mut leaf = BPlusTreeLeafPage::new(header);
         
         let size = leaf.header.get_size();
+        
+        // Check for duplicate
+        for i in 0..size {
+            if leaf.key_at(i) == key {
+                self.bpm.unpin_page(leaf_page_id, false);
+                return false;
+            }
+        }
+
         let max_size = leaf.header.get_max_size();
         
         if size < max_size {
@@ -116,6 +125,7 @@ impl BPlusTree {
             drop(leaf);
             self.bpm.write_to_page(leaf_page_id, &temp_page.data);
             self.bpm.unpin_page(leaf_page_id, true);
+            true
         } else {
             // Split Leaf
             // 1. New Page
@@ -167,6 +177,7 @@ impl BPlusTree {
             self.bpm.unpin_page(new_page_id, true);
             
             self.insert_into_parent(leaf_page_id, middle_key, new_page_id, parent_id);
+            true
         }
     }
 

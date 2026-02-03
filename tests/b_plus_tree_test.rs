@@ -1,9 +1,9 @@
-use dip_v1::storage::disk_manager::DiskManager;
 use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
+use dip_v1::storage::disk_manager::DiskManager;
 use dip_v1::storage::index::b_plus_tree::BPlusTree;
 use dip_v1::storage::table::rid::RID;
-use std::sync::Arc;
 use std::fs;
+use std::sync::Arc;
 
 #[test]
 fn test_b_plus_tree_insert_search() {
@@ -17,8 +17,11 @@ fn test_b_plus_tree_insert_search() {
     // 1. Insert small number
     for i in 0..10 {
         let rid = RID::new(i as u32, i as u32);
-        tree.insert(i, rid);
+        assert!(tree.insert(i, rid));
     }
+    
+    // Duplicate Key Test
+    assert!(!tree.insert(0, RID::new(99, 99)), "Duplicate key should fail");
     
     // 2. Search
     for i in 0..10 {
@@ -30,7 +33,7 @@ fn test_b_plus_tree_insert_search() {
     // Max size is large, so let's insert 500 more.
     for i in 10..500 {
         let rid = RID::new(i as u32, i as u32);
-        tree.insert(i, rid);
+        assert!(tree.insert(i, rid));
     }
     
     // 4. Verify all

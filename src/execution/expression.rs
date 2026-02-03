@@ -1,6 +1,6 @@
-use crate::types::{Value, TypeId};
-use crate::storage::tuple::Tuple;
 use crate::catalog::schema::Schema;
+use crate::storage::tuple::Tuple;
+use crate::types::Value;
 
 #[derive(Debug, Clone)]
 pub enum Expression {

@@ -1,9 +1,9 @@
+use crate::storage::buffer_pool_instance::BufferPoolInstance;
 use crate::storage::disk_manager::{DiskManager, PageId};
 use crate::storage::page::FrameId;
-use crate::storage::buffer_pool_instance::BufferPoolInstance;
-use std::sync::{Arc, Mutex};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
 
 const NUM_SHARDS: usize = 64;
 

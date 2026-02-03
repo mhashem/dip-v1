@@ -3,6 +3,9 @@ name = "dip-v1"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["sensor-api"]
+
 [dependencies]
 sqlparser = "0.35.0"
 thiserror = "2.0.18"

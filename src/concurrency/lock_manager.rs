@@ -1,9 +1,9 @@
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex, Condvar};
-use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
-use crate::storage::table::rid::RID;
 use crate::concurrency::transaction::{Transaction, TxnId};
+use crate::storage::table::rid::RID;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Condvar, Mutex};
 
 const NUM_SHARDS: usize = 64;
 
@@ -73,7 +73,8 @@ impl LockManager {
         let txn_id = txn.lock().unwrap().txn_id;
         
         // 0. Re-entrancy Check
-        if let Some(existing_req) = queue.request_queue.iter().find(|r| r.txn_id == txn_id && r.granted) {
+        // Use iter_mut to allow upgrade
+        if let Some(existing_req) = queue.request_queue.iter_mut().find(|r| r.txn_id == txn_id && r.granted) {
             match existing_req.mode {
                 LockMode::Exclusive => {
                     // Already hold X. Grants everything.
@@ -85,11 +86,23 @@ impl LockManager {
                         return true;
                     } else {
                         // Hold S, Want X. UPGRADE.
-                        // Not implemented yet. Fall through to wait?
-                        // If we wait, we deadlock ourselves (waiting for our own S to release?)
-                        // Upgrade requires: Check if we are the ONLY S holder.
-                        // For this fix, we just return false/fail for upgrade to avoid deadlock hang.
-                        return false; 
+                        if queue.shared_count == 1 {
+                            // We are the only holder. Upgrade allowed.
+                            existing_req.mode = LockMode::Exclusive;
+                            queue.shared_count -= 1;
+                            queue.exclusive_granted = true;
+                            
+                            // Update Transaction State
+                            let mut txn_guard = txn.lock().unwrap();
+                            txn_guard.shared_locks.remove(&rid);
+                            txn_guard.exclusive_locks.insert(rid);
+                            
+                            return true;
+                        } else {
+                            // Shared by others. Cannot upgrade immediately.
+                            // For strict 2PL without wait-die, we abort to avoid deadlock.
+                            return false; 
+                        }
                     }
                 }
             }

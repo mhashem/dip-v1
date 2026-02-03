@@ -1,6 +1,6 @@
+use crate::catalog::schema::Schema;
 use crate::execution::executor::{Executor, ExecutorContext};
 use crate::storage::tuple::Tuple;
-use crate::catalog::schema::Schema;
 use crate::types::Value;
 
 /// Inserts values into a table.
@@ -66,7 +66,10 @@ impl<'a> Executor for InsertExecutor<'a> {
              // Update Index
              if let Some(index) = &self.context.catalog.index {
                  if let Value::Integer(k) = tuple.get_value(&self.context.catalog.schema, 0) {
-                     index.lock().unwrap().insert(k, rid);
+                     if !index.write().unwrap().insert(k, rid) {
+                         // Duplicate Key! Abort.
+                         return None; 
+                     }
                  }
              }
         }

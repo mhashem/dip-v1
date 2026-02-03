@@ -1,7 +1,7 @@
-use crate::execution::executor::{Executor, ExecutorContext};
-use crate::storage::tuple::Tuple;
 use crate::catalog::schema::Schema;
+use crate::execution::executor::{Executor, ExecutorContext};
 use crate::execution::expression::Expression;
+use crate::storage::tuple::Tuple;
 use crate::types::Value;
 
 pub struct FilterExecutor<'a> {

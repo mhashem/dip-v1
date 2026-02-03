@@ -1,7 +1,6 @@
+use crate::catalog::schema::Schema;
 use crate::execution::executor::{Executor, ExecutorContext};
 use crate::storage::tuple::Tuple;
-use crate::catalog::schema::Schema;
-use crate::types::Value;
 
 pub struct IndexScanExecutor<'a> {
     context: &'a ExecutorContext,
@@ -31,7 +30,7 @@ impl<'a> Executor for IndexScanExecutor<'a> {
         self.finished = true;
 
         if let Some(index) = &self.context.catalog.index {
-            if let Some(rid) = index.lock().unwrap().get_value(self.key) {
+            if let Some(rid) = index.read().unwrap().get_value(self.key) {
                 return self.context.catalog.table.get_tuple(rid);
             }
         }

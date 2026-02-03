@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use crate::storage::table::rid::RID;
+use std::collections::HashSet;
 
 pub type TxnId = usize;
 

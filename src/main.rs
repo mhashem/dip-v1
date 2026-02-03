@@ -1,9 +1,9 @@
-use dip_v1::storage::disk_manager::DiskManager;
-use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
 use dip_v1::catalog::catalog_manager::CatalogManager;
 use dip_v1::sql::engine::SQLEngine;
-use std::sync::Arc;
+use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
+use dip_v1::storage::disk_manager::DiskManager;
 use std::io::{self, Write};
+use std::sync::Arc;
 
 fn main() {
     println!("DIP-DB: Educational Embedded Database");

@@ -1,5 +1,4 @@
 use crate::storage::disk_manager::PageId;
-use std::mem::size_of;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexPageType {

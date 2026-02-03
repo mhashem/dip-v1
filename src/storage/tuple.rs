@@ -1,6 +1,6 @@
 use crate::catalog::schema::Schema;
-use crate::types::{Value, TypeId};
 use crate::storage::table::rid::RID;
+use crate::types::{TypeId, Value};
 
 #[derive(Debug, Clone)]
 pub struct Tuple {

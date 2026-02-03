@@ -1,5 +1,5 @@
-use crate::storage::page::Page;
 use crate::storage::disk_manager::PAGE_SIZE;
+use crate::storage::page::Page;
 use crate::storage::tuple::Tuple;
 
 /// Header size: 
@@ -148,6 +148,18 @@ impl<'a> SlottedPage<'a> {
         let offset = self.get_u16(slot_offset);
         let length = self.get_u16(slot_offset + 2);
         (offset, length)
+    }
+
+    pub fn mark_delete(&mut self, slot_id: u16) -> bool {
+        if slot_id >= self.get_slot_count() {
+            return false;
+        }
+        // Set length to 0 to mark as deleted
+        // We keep the offset pointing to data (garbage) but logically it's gone.
+        // Compaction would be needed to reclaim space.
+        let slot_offset = HEADER_SIZE + (slot_id as usize * 4);
+        self.set_u16(slot_offset + 2, 0); 
+        true
     }
 }
 

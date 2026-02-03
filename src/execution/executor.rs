@@ -1,8 +1,8 @@
 use crate::catalog::catalog_manager::TableMetadata;
 use crate::catalog::schema::Schema;
-use crate::storage::tuple::Tuple;
-use crate::concurrency::transaction::Transaction;
 use crate::concurrency::lock_manager::LockManager;
+use crate::concurrency::transaction::Transaction;
+use crate::storage::tuple::Tuple;
 use std::sync::{Arc, Mutex};
 
 pub struct ExecutorContext {

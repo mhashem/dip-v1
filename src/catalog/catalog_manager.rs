@@ -1,21 +1,21 @@
 use crate::catalog::schema::Schema;
-use crate::storage::table::table_heap::TableHeap;
-use crate::storage::buffer_pool_manager::BufferPoolManager;
 use crate::catalog::stats::PageStats;
+use crate::storage::buffer_pool_manager::BufferPoolManager;
 use crate::storage::disk_manager::PageId;
 use crate::storage::index::b_plus_tree::BPlusTree;
+use crate::storage::table::table_heap::TableHeap;
 use crate::types::TypeId;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
-use std::io::{Read, Write};
 use std::convert::TryInto;
+use std::io::{Read, Write};
+use std::sync::{Arc, RwLock};
 
 pub struct TableMetadata {
     pub name: String,
     pub schema: Schema,
     pub table: TableHeap,
     pub page_stats: RwLock<HashMap<PageId, PageStats>>,
-    pub index: Option<Arc<Mutex<BPlusTree>>>,
+    pub index: Option<Arc<RwLock<BPlusTree>>>,
 }
 
 pub struct CatalogManager {
@@ -37,7 +37,7 @@ impl CatalogManager {
         // Check for Index (Primary Key is Integer)
         let index = if let Some(pk_idx) = schema.get_primary_key_index() {
             if schema.columns[pk_idx].type_id == TypeId::Integer {
-                Some(Arc::new(Mutex::new(BPlusTree::new(self.bpm.clone()))))
+                Some(Arc::new(RwLock::new(BPlusTree::new(self.bpm.clone()))))
             } else {
                 None
             }
@@ -85,7 +85,7 @@ impl CatalogManager {
             
             // Index Root Page ID (0 if None)
             let index_root = if let Some(idx) = &metadata.index {
-                idx.lock().unwrap().get_root_page_id()
+                idx.read().unwrap().get_root_page_id()
             } else {
                 0
             };
@@ -149,7 +149,7 @@ impl CatalogManager {
             offset += 4;
             
             let index = if index_root != 0 {
-                Some(Arc::new(Mutex::new(BPlusTree::from_root_page_id(self.bpm.clone(), index_root))))
+                Some(Arc::new(RwLock::new(BPlusTree::from_root_page_id(self.bpm.clone(), index_root))))
             } else {
                 None
             };
@@ -196,8 +196,8 @@ impl CatalogManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::disk_manager::DiskManager;
     use crate::catalog::column::Column;
+    use crate::storage::disk_manager::DiskManager;
     use crate::types::TypeId;
     use tempfile::NamedTempFile;
 
