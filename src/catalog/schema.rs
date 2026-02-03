@@ -33,6 +33,11 @@ impl Schema {
         self.columns.len()
     }
 
+    /// Returns the index of the primary key column, if any.
+    pub fn get_primary_key_index(&self) -> Option<usize> {
+        self.columns.iter().position(|c| c.is_primary)
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         // Num columns (u32)

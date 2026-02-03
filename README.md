@@ -42,7 +42,27 @@ This project is an educational, embedded database built from scratch in Rust. It
 - `src/execution`: Query operators.
 - `src/sql`: Parsing and Binding.
 
-## Future Phases (Advanced)
-- [ ] **Transactions (ACID):** Transaction Manager and Lock Manager.
-- [ ] **Concurrency Control:** MVCC.
-- [ ] **Recovery:** Write-Ahead Logging (WAL).
+## Roadmap: Path to Production
+
+The goal is to elevate **DIP-DB** from an educational prototype to a robust, usable embedded database. Future agents should follow this roadmap:
+
+### Phase 4: Transactions & Concurrency (ACID)
+*   **Transaction Manager:** Implement `BEGIN`, `COMMIT`, `ROLLBACK`. Track transaction states and assign Transaction IDs (TIDs).
+*   **Lock Manager:** Implement strict Two-Phase Locking (2PL) or MVCC (Multi-Version Concurrency Control) to handle concurrent readers and writers safely.
+*   **Isolation Levels:** Target `REPEATABLE READ` or `SNAPSHOT ISOLATION`.
+
+### Phase 5: Durability & Recovery
+*   **Write-Ahead Logging (WAL):** Implement a log manager. All modifications must be logged before pages are flushed to disk.
+*   **ARIES Recovery:** Implement the Analysis, Redo, and Undo phases to ensure database consistency after a crash.
+*   **Checkpoints:** Periodic flushing of dirty pages to truncate the log.
+
+### Phase 6: Query Engine Enhancements
+*   **Joins:** Implement `NestedLoopJoin` and `HashJoin` executors to support multi-table queries.
+*   **Aggregations:** Support `GROUP BY`, `COUNT`, `SUM`, `AVG`.
+*   **Sorting:** Implement `ORDER BY` using external merge sort for datasets larger than memory.
+*   **Optimizer:** Implement a Cost-Based Optimizer (CBO) utilizing table statistics (Zone Maps) to select the best plan (e.g., Index Scan vs. Seq Scan).
+
+### Phase 7: SQL & Features
+*   **UPDATE / DELETE:** Support record modification and deletion (using tombstones in SlottedPage).
+*   **Primary Keys:** Explicitly define and enforce uniqueness using B+Trees.
+*   **Secondary Indexes:** Allow creating indexes on non-primary columns.

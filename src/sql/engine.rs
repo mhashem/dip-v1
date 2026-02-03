@@ -10,7 +10,7 @@ use crate::execution::expression::{Expression, BinaryOperator};
 use crate::execution::filter::FilterExecutor;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
-use sqlparser::ast::{Statement, ObjectName, DataType, SetExpr, Expr, Values};
+use sqlparser::ast::{Statement, ObjectName, DataType, SetExpr, Expr, Values, ColumnOption};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -74,7 +74,15 @@ impl SQLEngine {
                 DataType::Varchar(_) | DataType::String => TypeId::Varchar,
                 _ => return Err(SQLError::Unsupported(format!("Data type {:?} not supported", col.data_type))),
             };
-            schema_cols.push(Column::new(col_name, type_id));
+
+            let mut is_primary = false;
+            for option in col.options {
+                if let ColumnOption::Unique { is_primary: true } = option.option {
+                    is_primary = true;
+                }
+            }
+
+            schema_cols.push(Column::new_with_primary(col_name, type_id, is_primary));
         }
 
         let schema = Schema::new(schema_cols);

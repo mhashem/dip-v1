@@ -5,6 +5,7 @@ use std::convert::TryInto;
 pub struct Column {
     pub name: String,
     pub type_id: TypeId,
+    pub is_primary: bool,
     // Note: In advanced DBs, we'd store byte offsets here. 
     // For now, we keep it simple.
 }
@@ -14,6 +15,15 @@ impl Column {
         Self {
             name: name.into(),
             type_id,
+            is_primary: false,
+        }
+    }
+
+    pub fn new_with_primary(name: impl Into<String>, type_id: TypeId, is_primary: bool) -> Self {
+        Self {
+            name: name.into(),
+            type_id,
+            is_primary,
         }
     }
 
@@ -41,6 +51,8 @@ impl Column {
             TypeId::Varchar => 2,
         };
         bytes.push(type_code);
+        // Is Primary (u8) - 1 or 0
+        bytes.push(if self.is_primary { 1 } else { 0 });
         bytes
     }
 
@@ -48,7 +60,8 @@ impl Column {
         if data.len() < 4 { return None; }
         
         let name_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-        if data.len() < 4 + name_len + 1 { return None; }
+        // name + type(1) + primary(1)
+        if data.len() < 4 + name_len + 2 { return None; }
         
         let name_bytes = &data[4..4+name_len];
         let name = String::from_utf8(name_bytes.to_vec()).ok()?;
@@ -61,6 +74,12 @@ impl Column {
             _ => return None,
         };
         
-        Some((Self::new(name, type_id), 4 + name_len + 1))
+        let is_primary = data[4+name_len+1] == 1;
+        
+        Some((Self {
+            name,
+            type_id,
+            is_primary,
+        }, 4 + name_len + 2))
     }
 }

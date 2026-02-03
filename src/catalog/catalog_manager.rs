@@ -34,9 +34,13 @@ impl CatalogManager {
     pub fn create_table(&mut self, name: String, schema: Schema) -> Arc<TableMetadata> {
         let table = TableHeap::new(self.bpm.clone());
         
-        // Check for Index (First column is Integer)
-        let index = if !schema.columns.is_empty() && schema.columns[0].type_id == TypeId::Integer {
-            Some(Arc::new(Mutex::new(BPlusTree::new(self.bpm.clone()))))
+        // Check for Index (Primary Key is Integer)
+        let index = if let Some(pk_idx) = schema.get_primary_key_index() {
+            if schema.columns[pk_idx].type_id == TypeId::Integer {
+                Some(Arc::new(Mutex::new(BPlusTree::new(self.bpm.clone()))))
+            } else {
+                None
+            }
         } else {
             None
         };
