@@ -1,10 +1,14 @@
 use crate::catalog::catalog_manager::TableMetadata;
-use crate::storage::tuple::Tuple;
 use crate::catalog::schema::Schema;
-use std::sync::Arc;
+use crate::storage::tuple::Tuple;
+use crate::concurrency::transaction::Transaction;
+use crate::concurrency::lock_manager::LockManager;
+use std::sync::{Arc, Mutex};
 
 pub struct ExecutorContext {
-    pub catalog: Arc<TableMetadata>, // For simplicity, context holds the target table
+    pub catalog: Arc<TableMetadata>,
+    pub txn: Arc<Mutex<Transaction>>,
+    pub lock_manager: Arc<LockManager>,
 }
 
 pub trait Executor {

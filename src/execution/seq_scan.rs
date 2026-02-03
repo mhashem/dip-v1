@@ -3,6 +3,7 @@ use crate::storage::tuple::Tuple;
 use crate::catalog::schema::Schema;
 use crate::storage::table::table_heap::TableIterator;
 use crate::execution::expression::Expression;
+use crate::concurrency::lock_manager::LockMode;
 
 pub struct SeqScanExecutor<'a> {
     context: &'a ExecutorContext,
@@ -41,7 +42,7 @@ impl<'a> Executor for SeqScanExecutor<'a> {
             // Zone Map Pruning Logic
             if let Some(predicate) = &self.predicate {
                  let pid = iterator.get_current_page_id();
-                 println!("SeqScan checking page {}", pid); // DEBUG
+                 // println!("SeqScan checking page {}", pid); // DEBUG
                  
                  let stats_map = self.context.catalog.page_stats.read().unwrap();
                  let should_skip = if let Some(page_stats) = stats_map.get(&pid) {
@@ -52,7 +53,7 @@ impl<'a> Executor for SeqScanExecutor<'a> {
                  drop(stats_map); // Release lock immediately
 
                  if should_skip {
-                     println!("Skipping page {}", pid); // DEBUG
+                     // println!("Skipping page {}", pid); // DEBUG
                      iterator.skip_page();
                      if iterator.is_end() {
                          return None;
@@ -64,6 +65,13 @@ impl<'a> Executor for SeqScanExecutor<'a> {
             // println!("Scanning page {}", iterator.get_current_page_id());
             match iterator.next() {
                 Some(tuple) => {
+                    // ACQUIRE SHARED LOCK
+                    if let Some(rid) = tuple.rid {
+                        if !self.context.lock_manager.acquire_lock(self.context.txn.clone(), rid, LockMode::Shared) {
+                            return None; // Transaction Aborted
+                        }
+                    }
+
                     let matches = if let Some(predicate) = &self.predicate {
                         match predicate.evaluate(&tuple, &self.context.catalog.schema) {
                             crate::types::Value::Boolean(b) => b,

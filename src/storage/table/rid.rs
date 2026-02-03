@@ -1,6 +1,6 @@
 use crate::storage::disk_manager::PageId;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RID {
     pub page_id: PageId,
     pub slot_num: u32,

@@ -1,17 +1,20 @@
 use crate::catalog::catalog_manager::CatalogManager;
-use crate::catalog::schema::Schema;
 use crate::catalog::column::Column;
-use crate::types::{Value, TypeId};
+use crate::catalog::schema::Schema;
+use crate::concurrency::transaction_manager::TransactionManager;
 use crate::execution::executor::{Executor, ExecutorContext};
+use crate::execution::expression::{BinaryOperator, Expression};
+use crate::execution::filter::FilterExecutor;
+use crate::execution::index_scan::IndexScanExecutor;
 use crate::execution::insert::InsertExecutor;
 use crate::execution::seq_scan::SeqScanExecutor;
-use crate::execution::index_scan::IndexScanExecutor;
-use crate::execution::expression::{Expression, BinaryOperator};
-use crate::execution::filter::FilterExecutor;
-use sqlparser::dialect::GenericDialect;
+use crate::types::{TypeId, Value};
+use sqlparser::ast::{ColumnOption, DataType, Expr, ObjectName, SetExpr, Statement, Values};
 use sqlparser::parser::Parser;
-use sqlparser::ast::{Statement, ObjectName, DataType, SetExpr, Expr, Values, ColumnOption};
+use sqlparser::dialect::GenericDialect;
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
+use crate::concurrency::transaction::Transaction;
 
 #[derive(Error, Debug)]
 pub enum SQLError {
@@ -27,11 +30,15 @@ pub enum SQLError {
 
 pub struct SQLEngine {
     pub catalog: CatalogManager,
+    pub transaction_manager: Arc<TransactionManager>,
 }
 
 impl SQLEngine {
     pub fn new(catalog: CatalogManager) -> Self {
-        Self { catalog }
+        Self {
+            catalog,
+            transaction_manager: Arc::new(TransactionManager::new()),
+        }
     }
 
     pub fn execute(&mut self, sql: &str) -> Result<String, SQLError> {
@@ -40,6 +47,8 @@ impl SQLEngine {
             .map_err(|e| SQLError::ParseError(e.to_string()))?;
 
         let mut output = String::new();
+        // Start Transaction
+        let txn = self.transaction_manager.begin();
 
         for statement in ast {
             match statement {
@@ -48,16 +57,19 @@ impl SQLEngine {
                     output.push_str("Table created.\n");
                 }
                 Statement::Insert { table_name, source, .. } => {
-                    let count = self.handle_insert(table_name, source)?;
+                    let count = self.handle_insert(table_name, source, txn.clone())?;
                     output.push_str(&format!("Inserted {} rows.\n", count));
                 }
                 Statement::Query(query) => {
-                    let result = self.handle_query(query)?;
+                    let result = self.handle_query(query, txn.clone())?;
                     output.push_str(&result);
                 }
                 _ => return Err(SQLError::Unsupported("Only CREATE, INSERT, and SELECT are supported".into())),
             }
         }
+        
+        // Commit Transaction
+        self.transaction_manager.commit(txn);
 
         Ok(output)
     }
@@ -90,7 +102,7 @@ impl SQLEngine {
         Ok(())
     }
 
-    fn handle_insert(&mut self, table_name: ObjectName, source: Box<sqlparser::ast::Query>) -> Result<usize, SQLError> {
+    fn handle_insert(&mut self, table_name: ObjectName, source: Box<sqlparser::ast::Query>, txn: Arc<Mutex<Transaction>>) -> Result<usize, SQLError> {
         let name_str = table_name.to_string();
         let table_meta = self.catalog.get_table(&name_str)
             .ok_or_else(|| SQLError::CatalogError(format!("Table {} not found", name_str)))?;
@@ -132,7 +144,11 @@ impl SQLEngine {
         }
 
         let count = values_batch.len();
-        let context = ExecutorContext { catalog: table_meta.clone() };
+        let context = ExecutorContext { 
+            catalog: table_meta.clone(),
+            txn: txn.clone(),
+            lock_manager: self.transaction_manager.lock_manager.clone(),
+        };
         let mut exec = InsertExecutor::new(&context, values_batch);
         exec.init();
         
@@ -141,7 +157,7 @@ impl SQLEngine {
         Ok(count)
     }
 
-    fn handle_query(&mut self, query: Box<sqlparser::ast::Query>) -> Result<String, SQLError> {
+    fn handle_query(&mut self, query: Box<sqlparser::ast::Query>, txn: Arc<Mutex<Transaction>>) -> Result<String, SQLError> {
         // Assume SELECT * FROM table
         let (table_name, selection) = match query.body.as_ref() {
             SetExpr::Select(select) => {
@@ -160,7 +176,11 @@ impl SQLEngine {
         let table_meta = self.catalog.get_table(&table_name)
             .ok_or_else(|| SQLError::CatalogError(format!("Table {} not found", table_name)))?;
         
-        let context = ExecutorContext { catalog: table_meta.clone() };
+        let context = ExecutorContext { 
+            catalog: table_meta.clone(),
+            txn: txn.clone(),
+            lock_manager: self.transaction_manager.lock_manager.clone(),
+        };
         
         // Build Executor Chain
         let mut root_exec: Box<dyn Executor>;

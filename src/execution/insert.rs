@@ -50,6 +50,11 @@ impl<'a> Executor for InsertExecutor<'a> {
         
         // YOUR CODE HERE: Insert `tuple` into `self.context.catalog.table`
         if let Some(rid) = self.context.catalog.table.insert_tuple(&tuple) {
+             // ACQUIRE EXCLUSIVE LOCK
+             if !self.context.lock_manager.acquire_lock(self.context.txn.clone(), rid, crate::concurrency::lock_manager::LockMode::Exclusive) {
+                 return None;
+             }
+
              // Update Zone Maps
              let mut stats_map = self.context.catalog.page_stats.write().unwrap();
              let page_stats = stats_map.entry(rid.page_id).or_insert_with(crate::catalog::stats::PageStats::new);

@@ -2,7 +2,7 @@ use dip_v1::storage::disk_manager::DiskManager;
 use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
 use dip_v1::catalog::catalog_manager::CatalogManager;
 use dip_v1::sql::engine::SQLEngine;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[test]
 fn test_sql_engine_end_to_end() {
@@ -12,7 +12,7 @@ fn test_sql_engine_end_to_end() {
     }
 
     let dm = DiskManager::new(&file_path).unwrap();
-    let bpm = Arc::new(Mutex::new(BufferPoolManager::new(100, dm)));
+    let bpm = Arc::new(BufferPoolManager::new(100, dm));
     let catalog = CatalogManager::new(bpm);
     let mut engine = SQLEngine::new(catalog);
 

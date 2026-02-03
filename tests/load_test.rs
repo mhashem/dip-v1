@@ -2,7 +2,7 @@ use dip_v1::storage::disk_manager::DiskManager;
 use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
 use dip_v1::catalog::catalog_manager::CatalogManager;
 use dip_v1::sql::engine::SQLEngine;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 
 #[test]
@@ -15,7 +15,7 @@ fn test_load_performance() {
     let dm = DiskManager::new(&file_path).unwrap();
     // Use a large buffer pool to avoid disk I/O noise during the test (unless we want to test disk I/O)
     // 500 pages * 4KB = 2MB. Should fit easily.
-    let bpm = Arc::new(Mutex::new(BufferPoolManager::new(500, dm)));
+    let bpm = Arc::new(BufferPoolManager::new(500, dm));
     let catalog = CatalogManager::new(bpm);
     let mut engine = SQLEngine::new(catalog);
 

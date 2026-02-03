@@ -19,12 +19,12 @@ pub struct TableMetadata {
 }
 
 pub struct CatalogManager {
-    bpm: Arc<Mutex<BufferPoolManager>>,
+    bpm: Arc<BufferPoolManager>,
     tables: HashMap<String, Arc<TableMetadata>>,
 }
 
 impl CatalogManager {
-    pub fn new(bpm: Arc<Mutex<BufferPoolManager>>) -> Self {
+    pub fn new(bpm: Arc<BufferPoolManager>) -> Self {
         Self {
             bpm,
             tables: HashMap::new(),
@@ -205,7 +205,8 @@ mod tests {
     fn test_catalog_manager() {
         let temp_file = NamedTempFile::new().unwrap();
         let dm = DiskManager::new(temp_file.path()).unwrap();
-        let bpm = Arc::new(Mutex::new(BufferPoolManager::new(10, dm)));
+        // Remove Mutex
+        let bpm = Arc::new(BufferPoolManager::new(10, dm));
         
         let mut catalog = CatalogManager::new(bpm);
         

@@ -2,7 +2,7 @@ use dip_v1::storage::disk_manager::DiskManager;
 use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
 use dip_v1::storage::table::table_heap::TableHeap;
 use dip_v1::storage::tuple::Tuple;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[test]
 fn test_storage_engine_integration() {
@@ -17,9 +17,10 @@ fn test_storage_engine_integration() {
     let tuple_count = 500;
 
     {
-        let dm = DiskManager::new(&file_path).unwrap();
-        let bpm = Arc::new(Mutex::new(BufferPoolManager::new(pool_size, dm)));
-        let table = TableHeap::new(bpm.clone());
+    let dm = DiskManager::new(&file_path).unwrap();
+    let bpm = Arc::new(BufferPoolManager::new(10, dm));
+    
+    let table = TableHeap::new(bpm);
 
         // 2. Insert many tuples (this will span multiple pages and cause evictions)
         for i in 0..tuple_count {
@@ -46,7 +47,7 @@ fn test_storage_engine_integration() {
         let num_pages = dm.num_pages();
         assert!(num_pages > 1, "Should have spanned multiple pages, got {}", num_pages);
 
-        let bpm = Arc::new(Mutex::new(BufferPoolManager::new(pool_size, dm)));
+        let bpm = Arc::new(BufferPoolManager::new(pool_size, dm));
         let table = TableHeap::from_first_page_id(bpm, 0);
 
         // Verify all data is still there and correct

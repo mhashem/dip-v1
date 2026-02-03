@@ -2,7 +2,7 @@ use dip_v1::storage::disk_manager::DiskManager;
 use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
 use dip_v1::catalog::catalog_manager::CatalogManager;
 use dip_v1::sql::engine::SQLEngine;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::io::{self, Write};
 
 fn main() {
@@ -15,7 +15,8 @@ fn main() {
     println!("Database file: {:?}", path);
     
     let dm = DiskManager::new(&path).unwrap();
-    let bpm = Arc::new(Mutex::new(BufferPoolManager::new(100, dm)));
+    // Sharded BPM is thread-safe internally
+    let bpm = Arc::new(BufferPoolManager::new(100, dm));
     let mut catalog = CatalogManager::new(bpm);
     
     // Load Metadata

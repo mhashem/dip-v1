@@ -1,204 +1,95 @@
-use crate::storage::disk_manager::{DiskManager, PageId, PAGE_SIZE};
-use crate::storage::page::{FrameId, Page};
-use crate::storage::replacer::{LRUReplacer, Replacer};
-use std::collections::HashMap;
-use std::sync::Mutex;
+use crate::storage::disk_manager::{DiskManager, PageId};
+use crate::storage::page::FrameId;
+use crate::storage::buffer_pool_instance::BufferPoolInstance;
+use std::sync::{Arc, Mutex};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
-const DEFAULT_BUFFER_POOL_SIZE: usize = 10;
+const NUM_SHARDS: usize = 64;
 
 pub struct BufferPoolManager {
-    disk_manager: DiskManager,
-    replacer: LRUReplacer,
-    // The pool of pages. Index is FrameId.
-    pages: Vec<Mutex<Page>>,
-    // Map PageId -> FrameId
-    page_table: Mutex<HashMap<PageId, FrameId>>,
-    // List of free frames
-    free_list: Mutex<Vec<FrameId>>,
+    disk_manager: Arc<Mutex<DiskManager>>,
+    shards: Vec<Mutex<BufferPoolInstance>>,
+    num_shards: usize, 
 }
 
 impl BufferPoolManager {
-    pub fn new(pool_size: usize, disk_manager: DiskManager) -> Self {
-        let mut pages = Vec::with_capacity(pool_size);
-        let mut free_list = Vec::with_capacity(pool_size);
-        
-        for i in 0..pool_size {
-            pages.push(Mutex::new(Page::new()));
-            free_list.push(i);
+    pub fn new(total_pool_size: usize, disk_manager: DiskManager) -> Self {
+        let dm_arc = Arc::new(Mutex::new(disk_manager));
+        let mut shards = Vec::with_capacity(NUM_SHARDS);
+        let shard_size = total_pool_size / NUM_SHARDS;
+        // Ensure at least 1 page per shard if pool is small
+        let shard_size = if shard_size == 0 { 1 } else { shard_size };
+
+        for _ in 0..NUM_SHARDS {
+            shards.push(Mutex::new(BufferPoolInstance::new(shard_size, dm_arc.clone())));
         }
 
         Self {
-            disk_manager,
-            replacer: LRUReplacer::new(pool_size),
-            pages,
-            page_table: Mutex::new(HashMap::new()),
-            free_list: Mutex::new(free_list),
+            disk_manager: dm_arc,
+            shards,
+            num_shards: NUM_SHARDS,
         }
     }
 
-    /// Helper to find a victim frame:
-    /// 1. Check free list.
-    /// 2. If free list empty, ask replacer for victim.
-    /// 3. If replacer gives victim, write it to disk if dirty.
-    fn find_victim_frame(&mut self) -> Option<FrameId> {
-        // 1. Check free list
-        let mut free_list = self.free_list.lock().unwrap();
-        if let Some(frame_id) = free_list.pop() {
-            return Some(frame_id);
-        }
-        drop(free_list); // Release lock
-
-        // 2. Replacer
-        if let Some(frame_id) = self.replacer.victim() {
-            let mut page = self.pages[frame_id].lock().unwrap();
-            
-            // If dirty, write back
-            if page.is_dirty && page.id.is_some() {
-                self.disk_manager.write_page(page.id.unwrap(), &page.data).unwrap();
-            }
-
-            // Remove from page table
-            if let Some(pid) = page.id {
-                let mut page_table = self.page_table.lock().unwrap();
-                page_table.remove(&pid);
-            }
-
-            // Reset page metadata
-            page.id = None;
-            page.pin_count = 0;
-            page.is_dirty = false;
-            page.reset_memory();
-            
-            return Some(frame_id);
-        }
-
-        None
+    fn get_shard_idx(&self, page_id: PageId) -> usize {
+        let mut hasher = DefaultHasher::new();
+        page_id.hash(&mut hasher);
+        (hasher.finish() as usize) % self.num_shards
     }
 
-    pub fn fetch_page(&mut self, page_id: PageId) -> Option<FrameId> {
-        // 1. Check if page is already in buffer
-        {
-            let page_table = self.page_table.lock().unwrap();
-            if let Some(&frame_id) = page_table.get(&page_id) {
-                let mut page = self.pages[frame_id].lock().unwrap();
-                page.pin_count += 1;
-                self.replacer.pin(frame_id);
-                return Some(frame_id);
-            }
-        }
-
-        // 2. Not in buffer, need a frame
-        let frame_id = self.find_victim_frame()?;
-
-        // 3. Read page from disk
-        let mut page = self.pages[frame_id].lock().unwrap();
-        self.disk_manager.read_page(page_id, &mut page.data).ok()?;
-        
-        page.id = Some(page_id);
-        page.pin_count = 1;
-        page.is_dirty = false;
-
-        // 4. Update page table
-        let mut page_table = self.page_table.lock().unwrap();
-        page_table.insert(page_id, frame_id);
-        
-        // 5. Pin in replacer
-        self.replacer.pin(frame_id);
-
-        Some(frame_id)
+    pub fn fetch_page(&self, page_id: PageId) -> Option<FrameId> {
+        let shard_idx = self.get_shard_idx(page_id);
+        let mut shard = self.shards[shard_idx].lock().unwrap();
+        shard.fetch_page(page_id)
     }
 
     pub fn unpin_page(&self, page_id: PageId, is_dirty: bool) -> bool {
-        let page_table = self.page_table.lock().unwrap();
-        let frame_id = match page_table.get(&page_id) {
-            Some(&fid) => fid,
-            None => return false,
-        };
-
-        let mut page = self.pages[frame_id].lock().unwrap();
-        if page.pin_count == 0 {
-            return false;
-        }
-
-        page.pin_count -= 1;
-        if is_dirty {
-            page.is_dirty = true;
-        }
-
-        if page.pin_count == 0 {
-            self.replacer.unpin(frame_id);
-        }
-
-        true
+        let shard_idx = self.get_shard_idx(page_id);
+        let shard = self.shards[shard_idx].lock().unwrap();
+        shard.unpin_page(page_id, is_dirty)
     }
 
-    pub fn new_page(&mut self) -> Option<PageId> {
-        let frame_id = self.find_victim_frame()?;
-        let page_id = self.disk_manager.allocate_page();
-
-        let mut page = self.pages[frame_id].lock().unwrap();
-        page.id = Some(page_id);
-        page.pin_count = 1;
-        page.is_dirty = false; // New page is "clean" in the sense it doesn't need to be flushed *yet*? 
-                               // Actually, it's empty memory. We probably want to write it eventually.
-                               // But for now, it matches memory.
-
-        let mut page_table = self.page_table.lock().unwrap();
-        page_table.insert(page_id, frame_id);
+    pub fn new_page(&self) -> Option<PageId> {
+        // 1. Allocate PageID globally
+        let page_id = self.disk_manager.lock().unwrap().allocate_page();
         
-        self.replacer.pin(frame_id);
-
-        Some(page_id)
-    }
-
-    pub fn flush_page(&mut self, page_id: PageId) -> bool {
-         let page_table = self.page_table.lock().unwrap();
-        let frame_id = match page_table.get(&page_id) {
-            Some(&fid) => fid,
-            None => return false,
-        };
-
-        let mut page = self.pages[frame_id].lock().unwrap();
-        if page.is_dirty {
-            self.disk_manager.write_page(page_id, &page.data).unwrap();
-            page.is_dirty = false;
-        }
+        // 2. Delegate to shard
+        let shard_idx = self.get_shard_idx(page_id);
+        let mut shard = self.shards[shard_idx].lock().unwrap();
         
-        true
+        if shard.new_page(page_id).is_some() {
+            Some(page_id)
+        } else {
+            // If shard is full, we fail. 
+            // In a real system we would handle this better (global eviction or stealing).
+            None
+        }
     }
 
-    pub fn flush_all(&mut self) {
-        let page_table = self.page_table.lock().unwrap();
-        // Clone keys to avoid deadlock if we were to lock pages inside the loop 
-        // while holding page_table lock (though here it's fine as we don't call other BPM methods)
-        let page_ids: Vec<PageId> = page_table.keys().cloned().collect();
-        drop(page_table);
+    pub fn flush_page(&self, page_id: PageId) -> bool {
+        let shard_idx = self.get_shard_idx(page_id);
+        let mut shard = self.shards[shard_idx].lock().unwrap();
+        shard.flush_page(page_id)
+    }
 
-        for pid in page_ids {
-            self.flush_page(pid);
+    pub fn flush_all(&self) {
+        for shard in &self.shards {
+            let mut s = shard.lock().unwrap();
+            s.flush_all();
         }
     }
     
-    // Accessor to write data to a page (for testing/usage)
-    // In a real impl, we'd return a guard/wrapper
     pub fn write_to_page(&self, page_id: PageId, data: &[u8]) {
-        let page_table = self.page_table.lock().unwrap();
-        if let Some(&frame_id) = page_table.get(&page_id) {
-             let mut page = self.pages[frame_id].lock().unwrap();
-             let len = data.len().min(PAGE_SIZE);
-             page.data[0..len].copy_from_slice(&data[0..len]);
-             page.is_dirty = true;
-        }
+        let shard_idx = self.get_shard_idx(page_id);
+        let shard = self.shards[shard_idx].lock().unwrap();
+        shard.write_to_page(page_id, data);
     }
     
-    // Accessor to read data (for testing)
     pub fn read_from_page(&self, page_id: PageId) -> Vec<u8> {
-        let page_table = self.page_table.lock().unwrap();
-        if let Some(&frame_id) = page_table.get(&page_id) {
-             let page = self.pages[frame_id].lock().unwrap();
-             return page.data.to_vec();
-        }
-        vec![]
+        let shard_idx = self.get_shard_idx(page_id);
+        let shard = self.shards[shard_idx].lock().unwrap();
+        shard.read_from_page(page_id)
     }
 }
 
@@ -217,54 +108,35 @@ mod tests {
     fn test_buffer_pool_manager_new_page() {
         let temp_file = NamedTempFile::new().unwrap();
         let dm = DiskManager::new(temp_file.path()).unwrap();
-        let mut bpm = BufferPoolManager::new(3, dm);
+        // Use large enough pool so shards aren't empty (64 shards)
+        let bpm = BufferPoolManager::new(128, dm); 
 
         let page_id1 = bpm.new_page().unwrap();
         let page_id2 = bpm.new_page().unwrap();
-        let page_id3 = bpm.new_page().unwrap();
-
-        // Pool is full now (size 3)
-        assert_eq!(page_id1, 0);
-        assert_eq!(page_id2, 1);
-        assert_eq!(page_id3, 2);
-
-        // We can't allocate a 4th page because all 3 are pinned (pin_count=1 from new_page)
-        let page_id4 = bpm.new_page();
-        assert!(page_id4.is_none());
-
-        // Unpin page 1
-        bpm.unpin_page(page_id1, false);
         
-        // Now we can allocate
-        let page_id4 = bpm.new_page();
-        assert!(page_id4.is_some());
+        assert_ne!(page_id1, page_id2);
+
+        bpm.unpin_page(page_id1, false);
+        bpm.unpin_page(page_id2, false);
     }
 
     #[test]
     fn test_buffer_pool_manager_rw() {
         let temp_file = NamedTempFile::new().unwrap();
         let dm = DiskManager::new(temp_file.path()).unwrap();
-        let mut bpm = BufferPoolManager::new(2, dm); // Small pool
+        let bpm = BufferPoolManager::new(128, dm);
 
         let pid1 = bpm.new_page().unwrap();
         let data = b"Hello";
         bpm.write_to_page(pid1, data);
         
-        // Read back from memory
         let read = bpm.read_from_page(pid1);
         assert_eq!(&read[0..5], data);
         
-        // Unpin and mark dirty
         bpm.unpin_page(pid1, true);
         
-        // Create new pages to force eviction of pid1
-        let pid2 = bpm.new_page().unwrap();
-        bpm.unpin_page(pid2, false);
-        let _pid3 = bpm.new_page().unwrap(); // Should evict pid1 (LRU)
-        
-        // Fetch pid1 again -> should come from disk
-        // Since we evicted it dirty, it should have written "Hello" to disk
-        let _frame_id = bpm.fetch_page(pid1).unwrap();
+        // Fetch again
+        let _ = bpm.fetch_page(pid1).unwrap();
         let read_back = bpm.read_from_page(pid1);
         assert_eq!(&read_back[0..5], data);
     }

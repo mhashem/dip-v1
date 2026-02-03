@@ -6,7 +6,8 @@ use dip_v1::catalog::column::Column;
 use dip_v1::types::{Value, TypeId};
 use dip_v1::execution::executor::{Executor, ExecutorContext};
 use dip_v1::execution::insert::InsertExecutor;
-use std::sync::{Arc, Mutex};
+use dip_v1::concurrency::transaction_manager::TransactionManager;
+use std::sync::Arc;
 use std::fs;
 
 #[test]
@@ -20,7 +21,7 @@ fn test_metadata_persistence() {
     // 1. Create DB, Table, Insert Data, Check Stats
     {
         let dm = DiskManager::new(&db_path).unwrap();
-        let bpm = Arc::new(Mutex::new(BufferPoolManager::new(50, dm)));
+        let bpm = Arc::new(BufferPoolManager::new(50, dm));
         let mut catalog = CatalogManager::new(bpm);
 
         let schema = Schema::new(vec![
@@ -30,7 +31,14 @@ fn test_metadata_persistence() {
         let table_meta = catalog.create_table("t1".to_string(), schema);
         
         // Insert 0 and 100 to generate stats
-        let context = ExecutorContext { catalog: table_meta.clone() };
+        let txn_mgr = TransactionManager::new();
+        let txn = txn_mgr.begin();
+        
+        let context = ExecutorContext { 
+            catalog: table_meta.clone(),
+            txn: txn.clone(),
+            lock_manager: txn_mgr.lock_manager.clone(),
+        };
         let values = vec![
             vec![Value::Integer(0)],
             vec![Value::Integer(100)],
@@ -39,6 +47,8 @@ fn test_metadata_persistence() {
         let mut insert = InsertExecutor::new(&context, values);
         insert.init();
         while insert.next().is_some() {}
+        
+        txn_mgr.commit(txn);
         
         // Check Stats exist in memory
         let stats = table_meta.page_stats.read().unwrap();
@@ -51,7 +61,7 @@ fn test_metadata_persistence() {
     // 2. Restart (New Catalog, Load Metadata)
     {
         let dm = DiskManager::new(&db_path).unwrap();
-        let bpm = Arc::new(Mutex::new(BufferPoolManager::new(50, dm)));
+        let bpm = Arc::new(BufferPoolManager::new(50, dm));
         let mut catalog = CatalogManager::new(bpm);
         
         // Load

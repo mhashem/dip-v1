@@ -1,11 +1,10 @@
 use crate::storage::buffer_pool_manager::BufferPoolManager;
 use crate::storage::disk_manager::{PageId, PAGE_SIZE};
 use crate::storage::table::rid::RID;
-use crate::storage::index::b_plus_tree_page::{BPlusTreePage, IndexPageType, INDEX_PAGE_HEADER_SIZE};
+use crate::storage::index::b_plus_tree_page::{BPlusTreePage, INDEX_PAGE_HEADER_SIZE};
 use crate::storage::index::b_plus_tree_leaf_page::BPlusTreeLeafPage;
 use crate::storage::index::b_plus_tree_internal_page::BPlusTreeInternalPage;
-use std::sync::{Arc, Mutex};
-use std::convert::TryInto;
+use std::sync::Arc;
 
 // Constants
 const LEAF_ENTRY_SIZE: usize = 12;
@@ -14,17 +13,16 @@ const LEAF_MAX_SIZE: u32 = (PAGE_SIZE - INDEX_PAGE_HEADER_SIZE) as u32 / LEAF_EN
 const INTERNAL_MAX_SIZE: u32 = (PAGE_SIZE - INDEX_PAGE_HEADER_SIZE) as u32 / INTERNAL_ENTRY_SIZE as u32 - 1;
 
 pub struct BPlusTree {
-    bpm: Arc<Mutex<BufferPoolManager>>,
+    bpm: Arc<BufferPoolManager>,
     root_page_id: PageId,
 }
 
 impl BPlusTree {
-    pub fn new(bpm: Arc<Mutex<BufferPoolManager>>) -> Self {
-        let mut bpm_guard = bpm.lock().unwrap();
-        let root_page_id = bpm_guard.new_page().expect("Failed to allocate root");
+    pub fn new(bpm: Arc<BufferPoolManager>) -> Self {
+        let root_page_id = bpm.new_page().expect("Failed to allocate root");
         
-        let _frame_id = bpm_guard.fetch_page(root_page_id).expect("Failed to fetch root");
-        let page_data = bpm_guard.read_from_page(root_page_id);
+        let _frame_id = bpm.fetch_page(root_page_id).expect("Failed to fetch root");
+        let page_data = bpm.read_from_page(root_page_id);
         
         // Init as Leaf
         let mut temp_page = crate::storage::page::Page::new();
@@ -33,9 +31,8 @@ impl BPlusTree {
         let mut leaf = BPlusTreeLeafPage::new(header);
         leaf.init(root_page_id, 0, LEAF_MAX_SIZE); // 0 as invalid parent
         
-        bpm_guard.write_to_page(root_page_id, &temp_page.data);
-        bpm_guard.unpin_page(root_page_id, true);
-        drop(bpm_guard);
+        bpm.write_to_page(root_page_id, &temp_page.data);
+        bpm.unpin_page(root_page_id, true);
 
         Self {
             bpm,
@@ -43,7 +40,7 @@ impl BPlusTree {
         }
     }
     
-    pub fn from_root_page_id(bpm: Arc<Mutex<BufferPoolManager>>, root_page_id: PageId) -> Self {
+    pub fn from_root_page_id(bpm: Arc<BufferPoolManager>, root_page_id: PageId) -> Self {
         Self { bpm, root_page_id }
     }
 
@@ -52,27 +49,25 @@ impl BPlusTree {
     }
 
     pub fn is_empty(&self) -> bool {
-        let mut bpm = self.bpm.lock().unwrap();
-        if bpm.fetch_page(self.root_page_id).is_none() { return true; }
+        if self.bpm.fetch_page(self.root_page_id).is_none() { return true; }
         
-        let page_data = bpm.read_from_page(self.root_page_id);
+        let page_data = self.bpm.read_from_page(self.root_page_id);
         let mut temp_page = crate::storage::page::Page::new();
         temp_page.data.copy_from_slice(&page_data);
         let header = BPlusTreePage::new(&mut temp_page.data);
         
         let size = header.get_size();
-        bpm.unpin_page(self.root_page_id, false);
+        self.bpm.unpin_page(self.root_page_id, false);
         
         size == 0
     }
 
     pub fn get_value(&self, key: i32) -> Option<RID> {
-        let mut bpm = self.bpm.lock().unwrap();
         let mut current_page_id = self.root_page_id;
         
         loop {
-            if bpm.fetch_page(current_page_id).is_none() { return None; }
-            let page_data = bpm.read_from_page(current_page_id);
+            if self.bpm.fetch_page(current_page_id).is_none() { return None; }
+            let page_data = self.bpm.read_from_page(current_page_id);
             let mut temp_page = crate::storage::page::Page::new();
             temp_page.data.copy_from_slice(&page_data);
             let header = BPlusTreePage::new(&mut temp_page.data);
@@ -85,17 +80,17 @@ impl BPlusTree {
                 for i in 0..size {
                     if leaf.key_at(i) == key {
                         let rid = leaf.value_at(i);
-                        bpm.unpin_page(current_page_id, false);
+                        self.bpm.unpin_page(current_page_id, false);
                         return Some(rid);
                     }
                 }
-                bpm.unpin_page(current_page_id, false);
+                self.bpm.unpin_page(current_page_id, false);
                 return None;
             } else {
                 // Internal Node
                 let internal = BPlusTreeInternalPage::new(header);
                 let next_page_id = internal.lookup(key);
-                bpm.unpin_page(current_page_id, false);
+                self.bpm.unpin_page(current_page_id, false);
                 current_page_id = next_page_id;
             }
         }
@@ -103,14 +98,10 @@ impl BPlusTree {
 
     pub fn insert(&mut self, key: i32, value: RID) {
         // 1. Find Leaf
-        // We need to keep track of path or just use parent pointers (we have parent pointers).
-        // Let's optimize: Just go down.
-        
         let leaf_page_id = self.find_leaf_page(key);
         
-        let mut bpm = self.bpm.lock().unwrap();
-        let _ = bpm.fetch_page(leaf_page_id).unwrap();
-        let page_data = bpm.read_from_page(leaf_page_id);
+        let _ = self.bpm.fetch_page(leaf_page_id).unwrap();
+        let page_data = self.bpm.read_from_page(leaf_page_id);
         let mut temp_page = crate::storage::page::Page::new();
         temp_page.data.copy_from_slice(&page_data);
         
@@ -123,29 +114,18 @@ impl BPlusTree {
         if size < max_size {
             leaf.insert(key, value);
             drop(leaf);
-            bpm.write_to_page(leaf_page_id, &temp_page.data);
-            bpm.unpin_page(leaf_page_id, true);
+            self.bpm.write_to_page(leaf_page_id, &temp_page.data);
+            self.bpm.unpin_page(leaf_page_id, true);
         } else {
             // Split Leaf
             // 1. New Page
-            let new_page_id = bpm.new_page().unwrap();
+            let new_page_id = self.bpm.new_page().unwrap();
             
             // Init New Page
             let mut new_temp_page = crate::storage::page::Page::new();
             let new_header = BPlusTreePage::new(&mut new_temp_page.data);
             let mut new_leaf = BPlusTreeLeafPage::new(new_header);
             new_leaf.init(new_page_id, leaf.header.get_parent_page_id(), max_size);
-            
-            // Move half
-            // Wait, first insert the new key into temp buffer? 
-            // Simplified: Insert then split? But we are full.
-            // Move half then insert?
-            // Correct: Create temp buffer of size N+1, insert, then split.
-            // Or: Move half. If key > middle, insert to new. Else insert to old.
-            
-            // For simplicity: We will assume we can always split first if full?
-            // No, standard is: insert, if full, split.
-            // But we can't insert if full in fixed size page.
             
             // Hack: Insert into sorted vector, then redistribute.
             let mut entries = Vec::new();
@@ -180,42 +160,34 @@ impl BPlusTree {
             drop(leaf);
             drop(new_leaf);
 
-            bpm.write_to_page(leaf_page_id, &temp_page.data);
-            bpm.write_to_page(new_page_id, &new_temp_page.data);
+            self.bpm.write_to_page(leaf_page_id, &temp_page.data);
+            self.bpm.write_to_page(new_page_id, &new_temp_page.data);
             
-            bpm.unpin_page(leaf_page_id, true);
-            bpm.unpin_page(new_page_id, true);
+            self.bpm.unpin_page(leaf_page_id, true);
+            self.bpm.unpin_page(new_page_id, true);
             
-            // Need to drop lock to recurse? Or pass lock? 
-            // Passing lock is hard with mutex.
-            // We'll release lock and call helper.
-            drop(bpm);
             self.insert_into_parent(leaf_page_id, middle_key, new_page_id, parent_id);
         }
     }
 
     fn find_leaf_page(&self, key: i32) -> PageId {
         let mut current_page_id = self.root_page_id;
-        // Lock bpm once? No, loop might be long. 
-        // But we hold lock across fetch/unpin.
-        // Better: Loop with lock.
-        let mut bpm = self.bpm.lock().unwrap();
         
         loop {
-            bpm.fetch_page(current_page_id).unwrap();
-            let page_data = bpm.read_from_page(current_page_id);
+            self.bpm.fetch_page(current_page_id).unwrap();
+            let page_data = self.bpm.read_from_page(current_page_id);
             let mut temp_page = crate::storage::page::Page::new();
             temp_page.data.copy_from_slice(&page_data);
             let header = BPlusTreePage::new(&mut temp_page.data);
             
             if header.is_leaf_page() {
-                bpm.unpin_page(current_page_id, false);
+                self.bpm.unpin_page(current_page_id, false);
                 return current_page_id;
             }
             
             let internal = BPlusTreeInternalPage::new(header);
             let next_page_id = internal.lookup(key);
-            bpm.unpin_page(current_page_id, false);
+            self.bpm.unpin_page(current_page_id, false);
             current_page_id = next_page_id;
         }
     }
@@ -223,10 +195,9 @@ impl BPlusTree {
     fn insert_into_parent(&mut self, left_child: PageId, key: i32, right_child: PageId, parent_id: PageId) {
         if parent_id == 0 {
             // New Root
-            let mut bpm = self.bpm.lock().unwrap();
-            let new_root_id = bpm.new_page().unwrap();
+            let new_root_id = self.bpm.new_page().unwrap();
             
-            let _ = bpm.fetch_page(new_root_id).unwrap();
+            let _ = self.bpm.fetch_page(new_root_id).unwrap();
              // Init New Root (Internal)
             let mut temp_page = crate::storage::page::Page::new();
             let header = BPlusTreePage::new(&mut temp_page.data);
@@ -241,35 +212,34 @@ impl BPlusTree {
             internal.header.set_size(2);
             
             drop(internal);
-            bpm.write_to_page(new_root_id, &temp_page.data);
+            self.bpm.write_to_page(new_root_id, &temp_page.data);
             
             // Update children parents
             // Left
-            let _ = bpm.fetch_page(left_child).unwrap();
-            let l_data = bpm.read_from_page(left_child);
+            let _ = self.bpm.fetch_page(left_child).unwrap();
+            let l_data = self.bpm.read_from_page(left_child);
             let mut l_temp = crate::storage::page::Page::new();
             l_temp.data.copy_from_slice(&l_data);
             BPlusTreePage::new(&mut l_temp.data).set_parent_page_id(new_root_id);
-            bpm.write_to_page(left_child, &l_temp.data);
-            bpm.unpin_page(left_child, true);
+            self.bpm.write_to_page(left_child, &l_temp.data);
+            self.bpm.unpin_page(left_child, true);
             
             // Right
-            let _ = bpm.fetch_page(right_child).unwrap();
-            let r_data = bpm.read_from_page(right_child);
+            let _ = self.bpm.fetch_page(right_child).unwrap();
+            let r_data = self.bpm.read_from_page(right_child);
             let mut r_temp = crate::storage::page::Page::new();
             r_temp.data.copy_from_slice(&r_data);
             BPlusTreePage::new(&mut r_temp.data).set_parent_page_id(new_root_id);
-            bpm.write_to_page(right_child, &r_temp.data);
-            bpm.unpin_page(right_child, true);
+            self.bpm.write_to_page(right_child, &r_temp.data);
+            self.bpm.unpin_page(right_child, true);
             
-            bpm.unpin_page(new_root_id, true);
+            self.bpm.unpin_page(new_root_id, true);
             self.root_page_id = new_root_id;
             return;
         }
         
-        let mut bpm = self.bpm.lock().unwrap();
-        let _ = bpm.fetch_page(parent_id).unwrap();
-        let page_data = bpm.read_from_page(parent_id);
+        let _ = self.bpm.fetch_page(parent_id).unwrap();
+        let page_data = self.bpm.read_from_page(parent_id);
         let mut temp_page = crate::storage::page::Page::new();
         temp_page.data.copy_from_slice(&page_data);
         
@@ -279,14 +249,10 @@ impl BPlusTree {
         if internal.header.get_size() < internal.header.get_max_size() {
             internal.insert_node_after(left_child, key, right_child);
             drop(internal);
-            bpm.write_to_page(parent_id, &temp_page.data);
-            bpm.unpin_page(parent_id, true);
+            self.bpm.write_to_page(parent_id, &temp_page.data);
+            self.bpm.unpin_page(parent_id, true);
         } else {
              // Split Internal
-             // Similar logic: Copy to vec, insert, split.
-             // Note: Internal split moves middle key UP, doesn't copy it to new page.
-             
-             // Extract all
              let size = internal.header.get_size();
              let grandparent_id = internal.header.get_parent_page_id();
              let mut entries = Vec::new(); // (Key, Val)
@@ -310,7 +276,7 @@ impl BPlusTree {
              let up_key = entries[split_idx].0;
              
              // New Internal Page
-             let new_page_id = bpm.new_page().unwrap();
+             let new_page_id = self.bpm.new_page().unwrap();
              let mut new_temp_page = crate::storage::page::Page::new();
              let new_header = BPlusTreePage::new(&mut new_temp_page.data);
              let mut new_internal = BPlusTreeInternalPage::new(new_header);
@@ -337,63 +303,32 @@ impl BPlusTree {
                  new_internal.set_value_at(new_idx, entries[i].1);
                  
                  // Update children parent pointers!
-                 // We need to fetch the child page and update its parent.
-                 // We need to release the new_page lock (write lock on new_temp_page via new_internal) 
-                 // before fetching child? 
-                 // Actually, we are holding the generic mutex `bpm`.
-                 // `bpm` is Arc<Mutex<...>>.
-                 // The `bpm` variable in this scope is `Guard`.
-                 // We can use it to fetch pages.
-                 // We are holding `parent_id` (via temp_page/internal) and `new_page_id` (via new_temp_page/new_internal) purely as memory buffers.
-                 // The *Page* locks in BPM are not exposed here. BPM lock protects the frame table.
-                 // So we are safe to fetch other pages as long as we have frames available.
-                 
                  let child_page_id = entries[i].1;
-                 // Note: We are modifying `new_internal` (borrowing `new_temp_page`), so we can't easily use `bpm` 
-                 // if `bpm` methods borrow `bpm` mutably? 
-                 // `bpm.fetch_page` requires `&mut self`.
-                 // But we have `mut bpm`.
                  
-                 // Issue: `new_internal` borrows `new_temp_page`, which is local.
-                 // It does NOT borrow `bpm`.
-                 // So we can use `bpm`.
-                 
-                 if let Some(_frame) = bpm.fetch_page(child_page_id) {
-                     let child_data = bpm.read_from_page(child_page_id);
+                 if let Some(_frame) = self.bpm.fetch_page(child_page_id) {
+                     let child_data = self.bpm.read_from_page(child_page_id);
                      let mut child_temp = crate::storage::page::Page::new();
                      child_temp.data.copy_from_slice(&child_data);
                      
                      BPlusTreePage::new(&mut child_temp.data).set_parent_page_id(new_page_id);
                      
-                     bpm.write_to_page(child_page_id, &child_temp.data);
-                     bpm.unpin_page(child_page_id, true);
+                     self.bpm.write_to_page(child_page_id, &child_temp.data);
+                     self.bpm.unpin_page(child_page_id, true);
                  }
                  
                  new_idx += 1;
              }
              new_internal.header.set_size(new_idx);
              
-             // Update Parent Pointers for moved children
-             // This is tricky inside the lock. We are holding parent_id lock effectively (via write).
-             // We need to fetch children.
-             // Let's defer or assume we can fetch.
-             // We must release parent page lock before fetching children to avoid deadlock?
-             // No, standard latch crabbing.
-             
              drop(internal);
              drop(new_internal);
 
-             bpm.write_to_page(parent_id, &temp_page.data);
-             bpm.write_to_page(new_page_id, &new_temp_page.data);
+             self.bpm.write_to_page(parent_id, &temp_page.data);
+             self.bpm.write_to_page(new_page_id, &new_temp_page.data);
              
-             bpm.unpin_page(parent_id, true);
-             bpm.unpin_page(new_page_id, true);
+             self.bpm.unpin_page(parent_id, true);
+             self.bpm.unpin_page(new_page_id, true);
              
-             // Update children parents (omitted for brevity in this first pass, but CRITICAL for correct functionality)
-             // I'll skip this specific part to avoid massive complexity in this turn.
-             // "B+Tree is complex".
-             
-             drop(bpm);
              self.insert_into_parent(parent_id, up_key, new_page_id, grandparent_id);
         }
     }

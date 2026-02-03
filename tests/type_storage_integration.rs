@@ -3,7 +3,7 @@ use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
 use dip_v1::storage::table::table_heap::TableHeap;
 use dip_v1::storage::tuple::Tuple;
 use dip_v1::types::{Value, TypeId};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[test]
 fn test_value_storage_integration() {
@@ -13,9 +13,9 @@ fn test_value_storage_integration() {
     }
 
     {
-        let dm = DiskManager::new(&file_path).unwrap();
-        let bpm = Arc::new(Mutex::new(BufferPoolManager::new(10, dm)));
-        let table = TableHeap::new(bpm);
+    let dm = DiskManager::new(&file_path).unwrap();
+    let bpm = Arc::new(BufferPoolManager::new(10, dm));
+    let table = TableHeap::new(bpm);
 
         // 1. Create different types of values
         let val_int = Value::Integer(12345);

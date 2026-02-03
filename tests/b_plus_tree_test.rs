@@ -2,7 +2,7 @@ use dip_v1::storage::disk_manager::DiskManager;
 use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
 use dip_v1::storage::index::b_plus_tree::BPlusTree;
 use dip_v1::storage::table::rid::RID;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::fs;
 
 #[test]
@@ -11,9 +11,8 @@ fn test_b_plus_tree_insert_search() {
     if file_path.exists() { fs::remove_file(&file_path).unwrap(); }
 
     let dm = DiskManager::new(&file_path).unwrap();
-    let bpm = Arc::new(Mutex::new(BufferPoolManager::new(50, dm)));
-    
-    let mut tree = BPlusTree::new(bpm.clone());
+    let bpm = Arc::new(BufferPoolManager::new(10, dm));
+    let mut tree = BPlusTree::new(bpm);
     
     // 1. Insert small number
     for i in 0..10 {

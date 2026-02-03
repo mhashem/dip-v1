@@ -12,6 +12,10 @@ This project is an educational, embedded database built from scratch in Rust. It
   - `Type System`: Integer, Boolean, Varchar serialization.
   - `Catalog`: Schema definition and Table registry.
   - `Executors`: SeqScan and Insert operators.
+- **Concurrency Control (New!):**
+  - `TransactionManager`: ACID transaction lifecycle (Begin, Commit, Abort).
+  - `LockManager`: Row-level Strict Two-Phase Locking (2PL) with deadlock-free release logic.
+  - `Thread Safety`: Use of `Condvar` and `Mutex` for efficient thread synchronization.
 - **Frontend:**
   - `SQL Parser`: Powered by `sqlparser-rs`.
   - `REPL`: Interactive command-line interface.

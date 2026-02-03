@@ -7,7 +7,8 @@ use dip_v1::types::{Value, TypeId};
 use dip_v1::execution::executor::{Executor, ExecutorContext};
 use dip_v1::execution::insert::InsertExecutor;
 use dip_v1::execution::seq_scan::SeqScanExecutor;
-use std::sync::{Arc, Mutex};
+use dip_v1::concurrency::transaction_manager::TransactionManager;
+use std::sync::Arc;
 
 #[test]
 fn test_execution_engine() {
@@ -17,7 +18,7 @@ fn test_execution_engine() {
     }
 
     let dm = DiskManager::new(&file_path).unwrap();
-    let bpm = Arc::new(Mutex::new(BufferPoolManager::new(10, dm)));
+    let bpm = Arc::new(BufferPoolManager::new(10, dm));
     let mut catalog = CatalogManager::new(bpm);
 
     let schema = Schema::new(vec![
@@ -27,6 +28,10 @@ fn test_execution_engine() {
     
     let table_meta = catalog.create_table("users".to_string(), schema);
 
+    // Dummy Txn
+    let txn_mgr = TransactionManager::new();
+    let txn = txn_mgr.begin();
+
     // 1. Prepare Data
     let values_batch = vec![
         vec![Value::Integer(1), Value::Varchar("Alice".to_string())],
@@ -34,7 +39,11 @@ fn test_execution_engine() {
     ];
 
     // 2. Execute Insert
-    let context = ExecutorContext { catalog: table_meta.clone() };
+    let context = ExecutorContext { 
+        catalog: table_meta.clone(),
+        txn: txn.clone(),
+        lock_manager: txn_mgr.lock_manager.clone(),
+    };
     let mut insert_exec = InsertExecutor::new(&context, values_batch);
     insert_exec.init();
     

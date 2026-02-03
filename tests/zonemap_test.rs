@@ -8,7 +8,8 @@ use dip_v1::execution::executor::{Executor, ExecutorContext};
 use dip_v1::execution::insert::InsertExecutor;
 use dip_v1::execution::seq_scan::SeqScanExecutor;
 use dip_v1::execution::expression::{Expression, BinaryOperator};
-use std::sync::{Arc, Mutex};
+use dip_v1::concurrency::transaction_manager::TransactionManager;
+use std::sync::Arc;
 
 #[test]
 fn test_zonemap_pruning_infinite_loop() {
@@ -19,7 +20,7 @@ fn test_zonemap_pruning_infinite_loop() {
 
     let dm = DiskManager::new(&file_path).unwrap();
     // Use small buffer pool to force eviction if needed, though not strictly necessary here
-    let bpm = Arc::new(Mutex::new(BufferPoolManager::new(50, dm)));
+    let bpm = Arc::new(BufferPoolManager::new(50, dm));
     let mut catalog = CatalogManager::new(bpm);
 
     let schema = Schema::new(vec![
@@ -27,7 +28,16 @@ fn test_zonemap_pruning_infinite_loop() {
     ]);
     
     let table_meta = catalog.create_table("items".to_string(), schema);
-    let context = ExecutorContext { catalog: table_meta.clone() };
+    
+    // Dummy Txn
+    let txn_mgr = TransactionManager::new();
+    let txn = txn_mgr.begin();
+    
+    let context = ExecutorContext { 
+        catalog: table_meta.clone(),
+        txn: txn.clone(),
+        lock_manager: txn_mgr.lock_manager.clone(),
+    };
 
     // 1. Insert enough data to create multiple pages.
     // Assuming Page Size 4096. Tuple overhead ~something. 

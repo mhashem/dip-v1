@@ -1,14 +1,30 @@
 use crate::catalog::schema::Schema;
 use crate::types::{Value, TypeId};
+use crate::storage::table::rid::RID;
 
 #[derive(Debug, Clone)]
 pub struct Tuple {
     pub data: Vec<u8>,
+    pub rid: Option<RID>,
 }
 
 impl Tuple {
     pub fn new(data: Vec<u8>) -> Self {
-        Self { data }
+        Self { 
+            data,
+            rid: None,
+        }
+    }
+    
+    pub fn new_with_rid(data: Vec<u8>, rid: RID) -> Self {
+        Self {
+            data,
+            rid: Some(rid),
+        }
+    }
+
+    pub fn set_rid(&mut self, rid: RID) {
+        self.rid = Some(rid);
     }
 
     /// TASK 1: Construct a Tuple from a list of Values based on a Schema.
@@ -24,7 +40,10 @@ impl Tuple {
             data.extend(val.to_bytes());
         }
 
-        Self { data }
+        Self { 
+            data,
+            rid: None, 
+        }
     }
 
     /// TASK 2: Extract a specific Value from the raw bytes using the Schema.

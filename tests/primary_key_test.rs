@@ -2,14 +2,14 @@ use dip_v1::storage::disk_manager::DiskManager;
 use dip_v1::storage::buffer_pool_manager::BufferPoolManager;
 use dip_v1::catalog::catalog_manager::CatalogManager;
 use dip_v1::sql::engine::SQLEngine;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tempfile::NamedTempFile;
 
 #[test]
 fn test_primary_key_definition() {
     let temp_file = NamedTempFile::new().unwrap();
     let dm = DiskManager::new(temp_file.path()).unwrap();
-    let bpm = Arc::new(Mutex::new(BufferPoolManager::new(100, dm)));
+    let bpm = Arc::new(BufferPoolManager::new(100, dm));
     let catalog = CatalogManager::new(bpm);
     let mut engine = SQLEngine::new(catalog);
 
