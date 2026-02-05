@@ -27,7 +27,7 @@ fn test_primary_key_definition() {
     assert!(!name_col.is_primary, "Name column should NOT be primary key");
 
     // Check Index creation
-    assert!(table.index.is_some(), "Index should be created for Primary Key");
+    assert!(!table.indexes.read().unwrap().is_empty(), "Index should be created for Primary Key");
 
     // 2. Create table WITHOUT Primary Key
     let sql2 = "CREATE TABLE logs (msg VARCHAR, level INT)";
@@ -36,5 +36,5 @@ fn test_primary_key_definition() {
     let logs_table = engine.catalog.get_table("logs").expect("Table logs not found");
     assert!(!logs_table.schema.columns[0].is_primary);
     assert!(!logs_table.schema.columns[1].is_primary);
-    assert!(logs_table.index.is_none(), "Index should NOT be created if no Primary Key");
+    assert!(logs_table.indexes.read().unwrap().is_empty(), "Index should NOT be created if no Primary Key");
 }

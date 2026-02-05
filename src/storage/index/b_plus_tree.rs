@@ -96,6 +96,69 @@ impl BPlusTree {
         }
     }
 
+    pub fn update_value(&mut self, key: i32, new_value: RID) -> bool {
+        let leaf_page_id = self.find_leaf_page(key);
+        let _ = self.bpm.fetch_page(leaf_page_id).unwrap();
+        let page_data = self.bpm.read_from_page(leaf_page_id);
+        let mut temp_page = crate::storage::page::Page::new();
+        temp_page.data.copy_from_slice(&page_data);
+        
+        let header = BPlusTreePage::new(&mut temp_page.data);
+        let mut leaf = BPlusTreeLeafPage::new(header);
+        let size = leaf.header.get_size();
+        
+        for i in 0..size {
+            if leaf.key_at(i) == key {
+                leaf.set_value_at(i, new_value);
+                drop(leaf);
+                self.bpm.write_to_page(leaf_page_id, &temp_page.data);
+                self.bpm.unpin_page(leaf_page_id, true);
+                return true;
+            }
+        }
+        
+        self.bpm.unpin_page(leaf_page_id, false);
+        false
+    }
+
+    pub fn delete(&mut self, key: i32) -> bool {
+        let leaf_page_id = self.find_leaf_page(key);
+        let _ = self.bpm.fetch_page(leaf_page_id).unwrap();
+        let page_data = self.bpm.read_from_page(leaf_page_id);
+        let mut temp_page = crate::storage::page::Page::new();
+        temp_page.data.copy_from_slice(&page_data);
+        
+        let header = BPlusTreePage::new(&mut temp_page.data);
+        let mut leaf = BPlusTreeLeafPage::new(header);
+        let size = leaf.header.get_size();
+        
+        let mut found = false;
+        for i in 0..size {
+            if leaf.key_at(i) == key {
+                // Shift elements
+                for j in i..(size - 1) {
+                    let next_key = leaf.key_at(j + 1);
+                    let next_val = leaf.value_at(j + 1);
+                    leaf.set_key_at(j, next_key);
+                    leaf.set_value_at(j, next_val);
+                }
+                leaf.header.set_size(size - 1);
+                found = true;
+                break;
+            }
+        }
+        
+        if found {
+            drop(leaf);
+            self.bpm.write_to_page(leaf_page_id, &temp_page.data);
+            self.bpm.unpin_page(leaf_page_id, true);
+            true
+        } else {
+            self.bpm.unpin_page(leaf_page_id, false);
+            false
+        }
+    }
+
     pub fn insert(&mut self, key: i32, value: RID) -> bool {
         // 1. Find Leaf
         let leaf_page_id = self.find_leaf_page(key);

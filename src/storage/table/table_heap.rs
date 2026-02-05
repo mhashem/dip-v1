@@ -126,6 +126,26 @@ impl TableHeap {
         success
     }
 
+    pub fn rollback_delete(&self, rid: RID, original_len: u16) -> bool {
+        if self.bpm.fetch_page(rid.page_id).is_none() {
+            return false;
+        }
+        
+        let page_data = self.bpm.read_from_page(rid.page_id);
+        let mut temp_page = crate::storage::page::Page::new();
+        temp_page.data.copy_from_slice(&page_data);
+        let mut slotted = SlottedPage::new(&mut temp_page);
+        
+        let success = slotted.rollback_delete(rid.slot_num as u16, original_len);
+        
+        if success {
+            self.bpm.write_to_page(rid.page_id, &temp_page.data);
+        }
+        
+        self.bpm.unpin_page(rid.page_id, success);
+        success
+    }
+
     pub fn get_first_page_id(&self) -> PageId {
         self.first_page_id
     }

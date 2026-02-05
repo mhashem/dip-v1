@@ -6,6 +6,7 @@ pub mod insert;
 pub mod seq_scan;
 pub mod vectorized;
 pub mod update;
+pub mod delete;
 
 
 

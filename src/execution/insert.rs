@@ -50,6 +50,12 @@ impl<'a> Executor for InsertExecutor<'a> {
         
         // YOUR CODE HERE: Insert `tuple` into `self.context.catalog.table`
         if let Some(rid) = self.context.catalog.table.insert_tuple(&tuple) {
+             // Record for Undo
+             self.context.txn.lock().unwrap().write_set.push(crate::concurrency::transaction::WriteRecord::Insert { 
+                 table_name: self.context.catalog.name.clone(),
+                 rid 
+             });
+
              // ACQUIRE EXCLUSIVE LOCK
              if !self.context.lock_manager.acquire_lock(self.context.txn.clone(), rid, crate::concurrency::lock_manager::LockMode::Exclusive) {
                  return None;
@@ -63,11 +69,12 @@ impl<'a> Executor for InsertExecutor<'a> {
                  page_stats.update(i, val);
              }
 
-             // Update Index
-             if let Some(index) = &self.context.catalog.index {
-                 if let Value::Integer(k) = tuple.get_value(&self.context.catalog.schema, 0) {
+             // Update Indexes
+             let indexes = self.context.catalog.indexes.read().unwrap();
+             for (col_idx, index) in indexes.iter() {
+                 if let Value::Integer(k) = tuple.get_value(&self.context.catalog.schema, *col_idx) {
                      if !index.write().unwrap().insert(k, rid) {
-                         // Duplicate Key! Abort.
+                         // Duplicate Key (Primary Key constraint usually)
                          return None; 
                      }
                  }

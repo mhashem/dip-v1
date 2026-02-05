@@ -15,11 +15,12 @@ pub struct TableMetadata {
     pub schema: Schema,
     pub table: TableHeap,
     pub page_stats: RwLock<HashMap<PageId, PageStats>>,
-    pub index: Option<Arc<RwLock<BPlusTree>>>,
+    /// Map of Column Index -> B+Tree Index
+    pub indexes: RwLock<HashMap<usize, Arc<RwLock<BPlusTree>>>>,
 }
 
 pub struct CatalogManager {
-    bpm: Arc<BufferPoolManager>,
+    pub bpm: Arc<BufferPoolManager>,
     tables: HashMap<String, Arc<TableMetadata>>,
 }
 
@@ -33,28 +34,27 @@ impl CatalogManager {
 
     pub fn create_table(&mut self, name: String, schema: Schema) -> Arc<TableMetadata> {
         let table = TableHeap::new(self.bpm.clone());
+        let indexes = HashMap::new();
         
-        // Check for Index (Primary Key is Integer)
-        let index = if let Some(pk_idx) = schema.get_primary_key_index() {
-            if schema.columns[pk_idx].type_id == TypeId::Integer {
-                Some(Arc::new(RwLock::new(BPlusTree::new(self.bpm.clone()))))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let metadata = Arc::new(TableMetadata {
+        // Initial Primary Key Index
+        let metadata = TableMetadata {
             name: name.clone(),
-            schema,
+            schema: schema.clone(),
             table,
             page_stats: RwLock::new(HashMap::new()),
-            index,
-        });
-        
-        self.tables.insert(name, metadata.clone());
-        metadata
+            indexes: RwLock::new(indexes),
+        };
+
+        if let Some(pk_idx) = schema.get_primary_key_index() {
+            if schema.columns[pk_idx].type_id == TypeId::Integer {
+                let index = Arc::new(RwLock::new(BPlusTree::new(self.bpm.clone())));
+                metadata.indexes.write().unwrap().insert(pk_idx, index);
+            }
+        }
+
+        let metadata_arc = Arc::new(metadata);
+        self.tables.insert(name, metadata_arc.clone());
+        metadata_arc
     }
 
     pub fn get_table(&self, name: &str) -> Option<Arc<TableMetadata>> {
@@ -83,13 +83,15 @@ impl CatalogManager {
             let root_pid = metadata.table.get_first_page_id();
             file.write_all(&(root_pid as u32).to_le_bytes())?;
             
-            // Index Root Page ID (0 if None)
-            let index_root = if let Some(idx) = &metadata.index {
-                idx.read().unwrap().get_root_page_id()
-            } else {
-                0
-            };
-            file.write_all(&(index_root as u32).to_le_bytes())?;
+            // Num Indexes
+            let indexes = metadata.indexes.read().unwrap();
+            file.write_all(&(indexes.len() as u32).to_le_bytes())?;
+            
+            for (col_idx, index) in indexes.iter() {
+                file.write_all(&(*col_idx as u32).to_le_bytes())?;
+                let index_root = index.read().unwrap().get_root_page_id();
+                file.write_all(&(index_root as u32).to_le_bytes())?;
+            }
             
             // Zone Maps
             let stats = metadata.page_stats.read().unwrap();
@@ -143,16 +145,25 @@ impl CatalogManager {
             let root_pid = u32::from_le_bytes(buffer[offset..offset+4].try_into().unwrap()) as PageId;
             offset += 4;
             
-            // Index Root Page ID
-            if offset + 4 > buffer.len() { return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "EOF reading index root")); }
-            let index_root = u32::from_le_bytes(buffer[offset..offset+4].try_into().unwrap()) as PageId;
+            // Num Indexes
+            if offset + 4 > buffer.len() { return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "EOF reading num indexes")); }
+            let num_indexes = u32::from_le_bytes(buffer[offset..offset+4].try_into().unwrap()) as usize;
             offset += 4;
             
-            let index = if index_root != 0 {
-                Some(Arc::new(RwLock::new(BPlusTree::from_root_page_id(self.bpm.clone(), index_root))))
-            } else {
-                None
-            };
+            let indexes_map = RwLock::new(HashMap::new());
+            {
+                let mut map = indexes_map.write().unwrap();
+                for _ in 0..num_indexes {
+                    if offset + 8 > buffer.len() { return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "EOF reading index entry")); }
+                    let col_idx = u32::from_le_bytes(buffer[offset..offset+4].try_into().unwrap()) as usize;
+                    offset += 4;
+                    let index_root = u32::from_le_bytes(buffer[offset..offset+4].try_into().unwrap()) as PageId;
+                    offset += 4;
+                    
+                    let index = Arc::new(RwLock::new(BPlusTree::from_root_page_id(self.bpm.clone(), index_root)));
+                    map.insert(col_idx, index);
+                }
+            }
             
             // Reconstruct Table
             let table = TableHeap::from_first_page_id(self.bpm.clone(), root_pid);
@@ -183,7 +194,7 @@ impl CatalogManager {
                 schema,
                 table,
                 page_stats: page_stats_map,
-                index,
+                indexes: indexes_map,
             });
             
             self.tables.insert(name, metadata);

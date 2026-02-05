@@ -1,7 +1,15 @@
 use crate::storage::table::rid::RID;
+use crate::storage::tuple::Tuple;
 use std::collections::HashSet;
 
 pub type TxnId = usize;
+
+#[derive(Debug, Clone)]
+pub enum WriteRecord {
+    Insert { table_name: String, rid: RID },
+    Delete { table_name: String, rid: RID, old_tuple: Tuple },
+    Update { table_name: String, old_rid: RID, old_tuple: Tuple, new_rid: RID, new_tuple: Tuple },
+}
 
 /// Transaction States based on the standard lifecycle:
 /// Running -> Committed
@@ -14,10 +22,6 @@ pub enum TransactionState {
 }
 
 /// The Transaction context.
-/// 
-/// This struct holds the dynamic state of a single transaction.
-/// It is usually wrapped in an Arc<Mutex<Transaction>> because multiple parts
-/// of the engine (Executors, Lock Manager) need to read/modify it properly.
 pub struct Transaction {
     /// Unique identifier for this transaction.
     pub txn_id: TxnId,
@@ -26,14 +30,13 @@ pub struct Transaction {
     pub state: TransactionState,
     
     /// The set of shared locks (Read locks) held by this transaction.
-    /// We track these so we can release them when the transaction finishes.
     pub shared_locks: HashSet<RID>,
     
     /// The set of exclusive locks (Write locks) held by this transaction.
     pub exclusive_locks: HashSet<RID>,
     
-    // In the future, we will add:
-    // pub write_set: Vec<WriteRecord>, // For rollback (Undo)
+    /// List of modifications made by this transaction (for Undo/Abort).
+    pub write_set: Vec<WriteRecord>,
 }
 
 impl Transaction {
@@ -43,6 +46,7 @@ impl Transaction {
             state: TransactionState::Running,
             shared_locks: HashSet::new(),
             exclusive_locks: HashSet::new(),
+            write_set: Vec::new(),
         }
     }
 

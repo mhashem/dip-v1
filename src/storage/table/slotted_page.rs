@@ -155,10 +155,17 @@ impl<'a> SlottedPage<'a> {
             return false;
         }
         // Set length to 0 to mark as deleted
-        // We keep the offset pointing to data (garbage) but logically it's gone.
-        // Compaction would be needed to reclaim space.
         let slot_offset = HEADER_SIZE + (slot_id as usize * 4);
         self.set_u16(slot_offset + 2, 0); 
+        true
+    }
+
+    pub fn rollback_delete(&mut self, slot_id: u16, original_len: u16) -> bool {
+        if slot_id >= self.get_slot_count() {
+            return false;
+        }
+        let slot_offset = HEADER_SIZE + (slot_id as usize * 4);
+        self.set_u16(slot_offset + 2, original_len);
         true
     }
 }
