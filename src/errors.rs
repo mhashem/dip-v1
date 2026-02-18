@@ -25,6 +25,8 @@ pub enum DipError {
     UniqueViolation(String),
     #[error("[3004] Transaction Aborted")]
     TransactionAborted,
+    #[error("[3005] Internal Error: {0}")]
+    Internal(String),
 
     // 4xxx: Storage & IO
     #[error("[4001] IO Error: {0}")]

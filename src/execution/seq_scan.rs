@@ -65,11 +65,29 @@ impl<'a> Executor for SeqScanExecutor<'a> {
             // println!("Scanning page {}", iterator.get_current_page_id());
             match iterator.next() {
                 Some(tuple) => {
+                    let rid = tuple.rid.expect("Tuple must have RID from iterator");
+                    
                     // ACQUIRE SHARED LOCK
-                    if let Some(rid) = tuple.rid {
-                        if !self.context.lock_manager.acquire_lock(self.context.txn.clone(), rid, LockMode::Shared) {
-                            return None; // Transaction Aborted
-                        }
+                    if !self.context.lock_manager.acquire_lock(self.context.txn.clone(), rid, LockMode::Shared) {
+                        return None; // Transaction Aborted
+                    }
+
+                    // After acquiring lock, re-read the page to see if it's still deleted
+                    // Actually, TableHeap::get_tuple handles fetching the page.
+                    // But we need to check the SlottedPage's mark.
+                    let is_deleted = {
+                        let _frame = self.context.catalog.bpm.fetch_page(rid.page_id).unwrap();
+                        let data = self.context.catalog.bpm.read_from_page(rid.page_id);
+                        let mut temp_page = crate::storage::page::Page::new();
+                        temp_page.data.copy_from_slice(&data);
+                        let slotted = crate::storage::table::slotted_page::SlottedPage::new(&mut temp_page);
+                        let deleted = slotted.is_tuple_marked_for_delete(rid.slot_num as u16);
+                        self.context.catalog.bpm.unpin_page(rid.page_id, false);
+                        deleted
+                    };
+
+                    if is_deleted {
+                        continue; // Skip logically deleted tuple
                     }
 
                     let matches = if let Some(predicate) = &self.predicate {

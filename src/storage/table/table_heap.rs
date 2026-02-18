@@ -233,7 +233,7 @@ impl Iterator for TableIterator {
                     tuple.set_rid(RID::new(self.current_page_id, slot_id));
                     return Some(tuple);
                 }
-                // If None (deleted/empty slot), continue loop
+                // If None (deleted/empty slot) or marked for delete, continue loop
             }
             
             // End of page reached

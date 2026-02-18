@@ -6,7 +6,7 @@ use crate::catalog::schema::Schema;
 pub struct DeleteExecutor<'a> {
     context: &'a ExecutorContext,
     child: Box<dyn Executor + 'a>,
-    rids_to_delete: Vec<crate::storage::table::rid::RID>,
+    pub rids_to_delete: Vec<crate::storage::table::rid::RID>,
     cursor: usize,
 }
 
@@ -58,6 +58,16 @@ impl<'a> Executor for DeleteExecutor<'a> {
                 rid, 
                 old_tuple: tuple.clone() 
             });
+
+            // Update Indexes
+            let indexes = self.context.catalog.indexes.read().unwrap();
+            let schema = &self.context.catalog.schema;
+            for (col_idx, index) in indexes.iter() {
+                if let crate::types::Value::Integer(k) = tuple.get_value(schema, *col_idx) {
+                    index.write().unwrap().delete(k);
+                }
+            }
+
             Some(tuple)
         } else {
             None

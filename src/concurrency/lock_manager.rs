@@ -63,6 +63,9 @@ impl LockManager {
     /// Blocks until the lock is granted.
     /// Returns true if successful, false if aborted (deadlock detection not yet implemented).
     pub fn acquire_lock(&self, txn: Arc<Mutex<Transaction>>, rid: RID, mode: LockMode) -> bool {
+        let txn_id = txn.lock().unwrap().txn_id;
+        println!("Txn {} requesting {:?} lock on {:?}", txn_id, mode, rid);
+        
         let shard_idx = self.get_shard_idx(rid);
         let lock_shard = &self.shards[shard_idx];
         let condvar = &self.condvars[shard_idx];
@@ -70,19 +73,19 @@ impl LockManager {
         let mut table = lock_shard.lock().unwrap();
         let queue = table.entry(rid).or_insert_with(LockRequestQueue::default);
         
-        let txn_id = txn.lock().unwrap().txn_id;
-        
         // 0. Re-entrancy Check
         // Use iter_mut to allow upgrade
         if let Some(existing_req) = queue.request_queue.iter_mut().find(|r| r.txn_id == txn_id && r.granted) {
             match existing_req.mode {
                 LockMode::Exclusive => {
                     // Already hold X. Grants everything.
+                    println!("Txn {} already holds X lock on {:?}", txn_id, rid);
                     return true;
                 }
                 LockMode::Shared => {
                     if mode == LockMode::Shared {
                         // Already hold S. Grant S.
+                        println!("Txn {} already holds S lock on {:?}", txn_id, rid);
                         return true;
                     } else {
                         // Hold S, Want X. UPGRADE.
@@ -97,10 +100,12 @@ impl LockManager {
                             txn_guard.shared_locks.remove(&rid);
                             txn_guard.exclusive_locks.insert(rid);
                             
+                            println!("Txn {} upgraded S to X lock on {:?}", txn_id, rid);
                             return true;
                         } else {
                             // Shared by others. Cannot upgrade immediately.
                             // For strict 2PL without wait-die, we abort to avoid deadlock.
+                            println!("Txn {} failed to upgrade S to X lock on {:?}", txn_id, rid);
                             return false; 
                         }
                     }
@@ -123,10 +128,12 @@ impl LockManager {
             if self.can_grant_lock(queue, txn_id, mode) {
                 // Grant logic
                 self.grant_lock(queue, txn_id, mode);
+                println!("Txn {} granted {:?} lock on {:?}", txn_id, mode, rid);
                 break;
             }
 
             // Wait
+            println!("Txn {} waiting for {:?} lock on {:?}", txn_id, mode, rid);
             table = condvar.wait(table).unwrap();
             
             // Check if transaction was aborted externally while waiting?
@@ -135,6 +142,7 @@ impl LockManager {
                 let queue = table.get_mut(&rid).unwrap();
                 self.remove_request(queue, txn_id);
                 condvar.notify_all();
+                println!("Txn {} aborted while waiting for {:?}", txn_id, rid);
                 return false;
             }
         }

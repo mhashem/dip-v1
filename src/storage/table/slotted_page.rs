@@ -115,9 +115,14 @@ impl<'a> SlottedPage<'a> {
             return None;
         }
 
-        let (offset, size) = self.get_slot(slot_id);
-        
-        // Deleted tuple check (we can use size 0 or offset 0 to mark deletion)
+        let (offset, raw_size) = self.get_slot(slot_id);
+
+        // Deleted tombstone — treat as absent
+        if (raw_size & 0x8000) != 0 {
+            return None;
+        }
+
+        let size = raw_size & 0x7FFF;
         if size == 0 {
             return None;
         }
@@ -154,9 +159,9 @@ impl<'a> SlottedPage<'a> {
         if slot_id >= self.get_slot_count() {
             return false;
         }
-        // Set length to 0 to mark as deleted
-        let slot_offset = HEADER_SIZE + (slot_id as usize * 4);
-        self.set_u16(slot_offset + 2, 0); 
+        let (offset, length) = self.get_slot(slot_id);
+        // Set highest bit to mark as deleted
+        self.set_slot(slot_id, offset, length | 0x8000); 
         true
     }
 
@@ -164,9 +169,17 @@ impl<'a> SlottedPage<'a> {
         if slot_id >= self.get_slot_count() {
             return false;
         }
-        let slot_offset = HEADER_SIZE + (slot_id as usize * 4);
-        self.set_u16(slot_offset + 2, original_len);
+        let (offset, _) = self.get_slot(slot_id);
+        self.set_slot(slot_id, offset, original_len & 0x7FFF);
         true
+    }
+
+    pub fn is_tuple_marked_for_delete(&self, slot_id: u16) -> bool {
+        if slot_id >= self.get_slot_count() {
+            return false;
+        }
+        let (_, length) = self.get_slot(slot_id);
+        (length & 0x8000) != 0
     }
 }
 

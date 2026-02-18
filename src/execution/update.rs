@@ -13,7 +13,7 @@ pub struct UpdateExecutor<'a> {
     /// Maps Column Index -> Expression to calculate new value.
     assignments: HashMap<usize, Expression>,
     /// RIDs to update, collected during init or first next() call
-    rids_to_update: Vec<crate::storage::table::rid::RID>,
+    pub rids_to_update: Vec<crate::storage::table::rid::RID>,
     cursor: usize,
 }
 
@@ -86,6 +86,11 @@ impl<'a> Executor for UpdateExecutor<'a> {
         
         // 5. Insert New Tuple
         if let Some(new_rid) = self.context.catalog.table.insert_tuple(&new_tuple) {
+            // ACQUIRE EXCLUSIVE LOCK on new RID
+            if !self.context.lock_manager.acquire_lock(self.context.txn.clone(), new_rid, LockMode::Exclusive) {
+                return None;
+            }
+
             // Record for Undo
             self.context.txn.lock().unwrap().write_set.push(crate::concurrency::transaction::WriteRecord::Update { 
                 table_name: self.context.catalog.name.clone(),
@@ -116,8 +121,16 @@ impl<'a> Executor for UpdateExecutor<'a> {
                     if old_k == new_k {
                         idx.update_value(new_k, new_rid);
                     } else {
+                        // Attempt to delete old and insert new.
+                        // If insert fails (Duplicate), we must rollback this operation!
+                        // BUT wait, mark_delete was already called on heap.
+                        // For simplicity, we just return None and let txn rollback.
                         idx.delete(old_k);
-                        idx.insert(new_k, new_rid);
+                        if !idx.insert(new_k, new_rid) {
+                            // FAILED to insert new key (likely PK violation)
+                            // We need to signal failure.
+                            return None;
+                        }
                     }
                 }
             }

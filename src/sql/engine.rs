@@ -32,6 +32,14 @@ impl SQLEngine {
         }
     }
 
+    pub fn new_with_txn_manager(catalog: CatalogManager, txn_manager: Arc<TransactionManager>) -> Self {
+        Self {
+            catalog,
+            transaction_manager: txn_manager,
+            current_txn: None,
+        }
+    }
+
     pub fn execute(&mut self, sql: &str) -> Result<String, DipError> {
         let dialect = GenericDialect {};
         let ast = Parser::parse_sql(&dialect, sql)
@@ -50,7 +58,8 @@ impl SQLEngine {
                 t.clone()
             } else {
                 let t = self.transaction_manager.begin();
-                if !matches!(statement, Statement::StartTransaction { .. }) {
+                // ONLY set self.current_txn if it's not a transaction control statement
+                if !matches!(statement, Statement::StartTransaction { .. } | Statement::Commit { .. } | Statement::Rollback { .. }) {
                     self.current_txn = Some(t.clone());
                 }
                 t
@@ -186,8 +195,15 @@ impl SQLEngine {
                                      // Key didn't change, just point back to old_rid
                                      idx.update_value(old_k, old_rid);
                                  } else {
-                                     // Key changed, delete the new key and re-insert the old one
-                                     idx.delete(new_k);
+                                     // Key changed.
+                                     // 1. Delete the new key ONLY IF it points to our new_rid
+                                     // This is important if the update failed because new_k already existed!
+                                     if let Some(current_rid) = idx.get_value(new_k) {
+                                         if current_rid == new_rid {
+                                             idx.delete(new_k);
+                                         }
+                                     }
+                                     // 2. Re-insert the old key
                                      idx.insert(old_k, old_rid);
                                  }
                              }
@@ -248,10 +264,16 @@ impl SQLEngine {
         let mut update_exec = crate::execution::update::UpdateExecutor::new(&context, child_exec, assign_map);
         update_exec.init();
 
+        let expected_count = update_exec.rids_to_update.len();
         let mut count = 0;
         while update_exec.next().is_some() {
             count += 1;
         }
+        
+        if count < expected_count {
+            return Err(DipError::PkViolation("Duplicate or Lock Error during update".into()));
+        }
+        
         Ok(count)
     }
 
@@ -297,10 +319,16 @@ impl SQLEngine {
         let mut delete_exec = crate::execution::delete::DeleteExecutor::new(&context, child_exec);
         delete_exec.init();
 
+        let expected_count = delete_exec.rids_to_delete.len();
         let mut count = 0;
         while delete_exec.next().is_some() {
             count += 1;
         }
+        
+        if count < expected_count {
+             return Err(DipError::Internal("Error during delete execution".into()));
+        }
+        
         Ok(count)
     }
 

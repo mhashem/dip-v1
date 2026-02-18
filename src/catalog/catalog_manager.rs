@@ -14,21 +14,23 @@ pub struct TableMetadata {
     pub name: String,
     pub schema: Schema,
     pub table: TableHeap,
+    pub bpm: Arc<BufferPoolManager>,
     pub page_stats: RwLock<HashMap<PageId, PageStats>>,
     /// Map of Column Index -> B+Tree Index
     pub indexes: RwLock<HashMap<usize, Arc<RwLock<BPlusTree>>>>,
 }
 
+#[derive(Clone)]
 pub struct CatalogManager {
     pub bpm: Arc<BufferPoolManager>,
-    tables: HashMap<String, Arc<TableMetadata>>,
+    tables: Arc<RwLock<HashMap<String, Arc<TableMetadata>>>>,
 }
 
 impl CatalogManager {
     pub fn new(bpm: Arc<BufferPoolManager>) -> Self {
         Self {
             bpm,
-            tables: HashMap::new(),
+            tables: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -41,6 +43,7 @@ impl CatalogManager {
             name: name.clone(),
             schema: schema.clone(),
             table,
+            bpm: self.bpm.clone(),
             page_stats: RwLock::new(HashMap::new()),
             indexes: RwLock::new(indexes),
         };
@@ -53,12 +56,12 @@ impl CatalogManager {
         }
 
         let metadata_arc = Arc::new(metadata);
-        self.tables.insert(name, metadata_arc.clone());
+        self.tables.write().unwrap().insert(name, metadata_arc.clone());
         metadata_arc
     }
 
     pub fn get_table(&self, name: &str) -> Option<Arc<TableMetadata>> {
-        self.tables.get(name).cloned()
+        self.tables.read().unwrap().get(name).cloned()
     }
 
     pub fn save_metadata(&self, path: &std::path::Path) -> std::io::Result<()> {
@@ -67,10 +70,11 @@ impl CatalogManager {
         // Magic
         file.write_all(b"DIPM")?;
         
+        let tables = self.tables.read().unwrap();
         // Num Tables
-        file.write_all(&(self.tables.len() as u32).to_le_bytes())?;
+        file.write_all(&(tables.len() as u32).to_le_bytes())?;
         
-        for (name, metadata) in &self.tables {
+        for (name, metadata) in tables.iter() {
             // Name
             file.write_all(&(name.len() as u32).to_le_bytes())?;
             file.write_all(name.as_bytes())?;
@@ -107,12 +111,15 @@ impl CatalogManager {
     }
 
     pub fn load_metadata(&mut self, path: &std::path::Path) -> std::io::Result<()> {
+        println!("CatalogManager: Loading metadata from {:?}", path);
         if !path.exists() {
+            println!("CatalogManager: Metadata file does not exist");
             return Ok(());
         }
         let mut file = std::fs::File::open(path)?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
+        println!("CatalogManager: Read {} bytes", buffer.len());
         
         let mut offset = 0;
         if buffer.len() < 4 || &buffer[0..4] != b"DIPM" {
@@ -123,7 +130,9 @@ impl CatalogManager {
         if offset + 4 > buffer.len() { return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "EOF reading num tables")); }
         let num_tables = u32::from_le_bytes(buffer[offset..offset+4].try_into().unwrap()) as usize;
         offset += 4;
+        println!("CatalogManager: Found {} tables", num_tables);
         
+        let mut tables_map = HashMap::new();
         for _ in 0..num_tables {
             // Name
             if offset + 4 > buffer.len() { return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "EOF reading name len")); }
@@ -193,13 +202,15 @@ impl CatalogManager {
                 name: name.clone(),
                 schema,
                 table,
+                bpm: self.bpm.clone(),
                 page_stats: page_stats_map,
                 indexes: indexes_map,
             });
             
-            self.tables.insert(name, metadata);
+            tables_map.insert(name, metadata);
         }
         
+        *self.tables.write().unwrap() = tables_map;
         Ok(())
     }
 }
